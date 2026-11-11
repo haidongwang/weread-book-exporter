@@ -212,8 +212,8 @@ HOOK = """
     var origFill = CanvasRenderingContext2D.prototype.fillText;
     CanvasRenderingContext2D.prototype.fillText = function(text, x, y) {
         if (typeof text === 'string' && text.length) {
-            var st = (this.canvas && this.canvas.getAttribute('style')) || '';
-            var side = st.includes('right:') ? 1 : 0;
+            var rect = this.canvas.getBoundingClientRect();
+            var side = rect.left + rect.width / 2 >= window.innerWidth / 2 ? 1 : 0;
             window.__wr_chars.push({
                 t: text,
                 x: Math.round(x * 10) / 10,
@@ -313,7 +313,8 @@ def split_pages(chars):
                 last_y = c["y"]
     if cur:
         pages.append((cur_key[1], cur))
-    return pages
+    # Canvas repaint order can differ from the reading order of the spread.
+    return sorted(pages, key=lambda page: page[0])
 
 
 def page_lines(chars):
@@ -671,6 +672,7 @@ async def main(book_id_or_url, force=False):
             it = items.nth(nav_idx)
             await it.scroll_into_view_if_needed()
             await asyncio.sleep(0.3)
+            await page.evaluate("() => window.__wr_drain()")
             await it.click(timeout=5000)
             await asyncio.sleep(1.0)
             try:
@@ -687,6 +689,7 @@ async def main(book_id_or_url, force=False):
         seen_titles = set(completed_titles + [cur_title])
         saved_idx = len(completed_titles)
         buf = []
+        captured_heading = False
         stale = 0
         seen_last = False
         last_after_seen = 0
@@ -756,7 +759,7 @@ async def main(book_id_or_url, force=False):
                         remainder = ""
 
                     if is_new_chapter:
-                        if buf:
+                        if buf or captured_heading:
                             # 实时落盘刚完成的章节
                             saved_idx += 1
                             body, im_list = render_md(cur_title, buf, saved_idx)
@@ -777,6 +780,7 @@ async def main(book_id_or_url, force=False):
                             })
                         buf = []
                         cur_title = new_title
+                        captured_heading = True
                         seen_titles.add(cur_title)
                         print(f"\n  📑 [第 {step:03d} 页] 识别新章节: 《{cur_title}》", flush=True)
                         if last_cat and norm(cur_title) == last_cat:
@@ -847,7 +851,7 @@ async def main(book_id_or_url, force=False):
                     print(f"  🏁 连续 {stale} 页无新内容，判定全书抓取结束", flush=True)
                     break
 
-        if cur_title and buf:
+        if cur_title and (buf or captured_heading):
             saved_idx += 1
             body, im_list = render_md(cur_title, buf, saved_idx)
             txt_len = len(re.sub(r"<[^>]+>", "", body))

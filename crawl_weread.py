@@ -751,6 +751,9 @@ async def main(book_id_or_url, force=False):
                     elif ln["cls"] == "title" and norm(txt) != norm(cur_title) and len(txt) <= 40:
                         is_new_chapter = True
                         new_title = txt
+                        # This whole line became the heading. A failed catalog
+                        # match returns the original line as its remainder.
+                        remainder = ""
 
                     if is_new_chapter:
                         if buf:

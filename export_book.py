@@ -17,6 +17,8 @@ import sys
 
 from playwright.async_api import async_playwright
 
+from crawl_weread import wrapped_line_separator
+
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -60,7 +62,9 @@ def refine_chapter_text(text):
                     break
                 fang_parts.append(m2.group(1).strip())
                 i += 1
-            joined = "".join(fang_parts)
+            joined = fang_parts[0]
+            for part in fang_parts[1:]:
+                joined += wrapped_line_separator(joined, part) + part
             prev = blocks[-1] if blocks else ""
 
             # 若前一行是未闭合的标题/段落，则根据语意并入
@@ -73,7 +77,7 @@ def refine_chapter_text(text):
                     and not prev.startswith(("#", "<p", "!["))
                     and not SENT_END.search(re.sub(r"\*+$", "", prev))
                 ):
-                    blocks[-1] = prev + bold_seg
+                    blocks[-1] = prev + wrapped_line_separator(prev, joined) + bold_seg
                 else:
                     blocks.append(bold_seg)
         else:
@@ -84,7 +88,7 @@ def refine_chapter_text(text):
                 and blocks[-1].endswith("**")
                 and not SENT_END.search(blocks[-1][:-2])
             ):
-                blocks[-1] = blocks[-1] + line
+                blocks[-1] = blocks[-1] + wrapped_line_separator(blocks[-1], line) + line
             else:
                 blocks.append(line)
             i += 1
@@ -100,7 +104,7 @@ def refine_chapter_text(text):
             and blocks[idx + 1].startswith("![")
             and not blocks[idx + 2].startswith(("#", "<p", "!["))
         ):
-            merged.append(cur + blocks[idx + 2])
+            merged.append(cur + wrapped_line_separator(cur, blocks[idx + 2]) + blocks[idx + 2])
             merged.append(blocks[idx + 1])
             idx += 3
             continue

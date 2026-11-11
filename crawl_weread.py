@@ -211,7 +211,7 @@ HOOK = """
     };
     var origFill = CanvasRenderingContext2D.prototype.fillText;
     CanvasRenderingContext2D.prototype.fillText = function(text, x, y) {
-        if (text && text.trim()) {
+        if (typeof text === 'string' && text.length) {
             var st = (this.canvas && this.canvas.getAttribute('style')) || '';
             var side = st.includes('right:') ? 1 : 0;
             window.__wr_chars.push({
@@ -250,7 +250,6 @@ IMGS_JS = """
 }
 """
 
-MEASURE_RE = re.compile(r'^[a-zA-Z`~!@#$%^&*()\-_=+\[\]{}|;:\',<.>/?\\"\s]{2,}$')
 SENT_END_RE = re.compile(r"[。！？；：…][”」）】》]*$")
 
 
@@ -279,11 +278,9 @@ def split_pages(chars):
     real = []
     for c in chars:
         t = c["t"].replace("\u200b", "").replace("\ufeff", "")
-        if not t.strip():
+        if not t:
             continue
         if t.startswith("abcdefg"):
-            continue
-        if len(t) > 1 and MEASURE_RE.match(t):
             continue
         c = dict(c)
         c["t"] = t
@@ -336,7 +333,7 @@ def page_lines(chars):
     for ln in raw_lines:
         if (out and out[-1]["cls"] == "title" and ln["cls"] == "title"
                 and out[-1]["size"] == ln["size"] and ln["y"] - out[-1]["y"] < 55):
-            out[-1]["text"] += ln["text"]
+            out[-1]["text"] += wrapped_line_separator(out[-1]["text"], ln["text"]) + ln["text"]
             out[-1]["y"] = ln["y"]
         else:
             out.append(ln)
@@ -385,6 +382,15 @@ def match_catalog_title(text, catalog, seen_titles):
     return None, text
 
 
+def wrapped_line_separator(left, right):
+    """Restore a word separator at an English line wrap."""
+    left = left.rstrip("*")
+    right = right.lstrip("*")
+    if re.search(r"[A-Za-z0-9][,.!?;:)]?$", left) and re.match(r"[A-Za-z0-9]", right):
+        return " "
+    return ""
+
+
 def render_md(title, blocks, ch_idx):
     out = ["# %s\n" % title]
     buf, buf_cls = [], None
@@ -399,7 +405,7 @@ def render_md(title, blocks, ch_idx):
             merged = []
             for line in buf:
                 if merged and merged[-1] and not SENT_END_RE.search(merged[-1]):
-                    merged[-1] += line
+                    merged[-1] += wrapped_line_separator(merged[-1], line) + line
                 else:
                     merged.append(line)
             for m in merged:
@@ -407,7 +413,9 @@ def render_md(title, blocks, ch_idx):
                     out.append(m.strip())
                     out.append("")
         elif buf_cls == "yw":
-            joined = "".join(buf)
+            joined = buf[0]
+            for line in buf[1:]:
+                joined += wrapped_line_separator(joined, line) + line
             out.append('<p class="yw">%s</p>' % joined.strip())
             out.append("")
         elif buf_cls == "fang":

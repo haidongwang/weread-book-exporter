@@ -340,7 +340,7 @@ async def build_pdf(book_id, root, title, author, intro, texts):
 @page {{ size: A4; margin: 20mm 16.5mm 19mm 16.5mm; }}
 * {{ box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }}
 body {{
-    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei", sans-serif;
+    font-family: "Source Han Serif SC", "思源宋体", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei", sans-serif;
     font-size: 13.2pt; line-height: 1.95; letter-spacing: 0.018em; color: #24272b; margin: 0; padding: 0;
 }}
 .cover-page {{

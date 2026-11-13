@@ -360,7 +360,6 @@ async def build_pdf(book_id, root, title, author, intro, texts, cover_available=
         chap_htmls.append(
             f'<section class="{chapter_class}" id="chap-{i}">'
             f'<div class="chap-header">'
-            f'<div class="chap-idx">SECTION {i:02d}</div>'
             f'<h1>{ch_title}</h1>'
             f'<div class="chap-rule"></div>'
             f'</div>\n{body_html}</section>'
@@ -404,7 +403,6 @@ body {{
 .chapter {{ page-break-before: always; }}
 .copyright-page p {{ text-align: center; text-indent: 0; margin: 1.3em 0; }}
 .chap-header {{ text-align: center; margin: 2mm 0 8mm 0; page-break-after: avoid; }}
-.chap-idx {{ font-size: 8.5pt; color: #9e2a2b; letter-spacing: 0.22em; font-weight: 700; margin-bottom: 1.5mm; }}
 h1 {{ font-size: 19.5pt; font-weight: 700; color: #18181b; margin: 0 0 3.5mm 0; }}
 .chap-rule {{ width: 26mm; height: 2.5px; background: #9e2a2b; margin: 0 auto; border-radius: 2px; }}
 p {{ text-indent: 2em; margin: 0.68em 0; text-align: justify; orphans: 2; widows: 2; }}

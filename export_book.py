@@ -428,7 +428,7 @@ p.yw {{
     font-weight: bold; page-break-inside: avoid;
 }}
 .img-wrap {{ text-align: center; margin: 7mm 0; page-break-inside: avoid; }}
-.img-wrap img {{ max-width: 86%; max-height: 175mm; height: auto; border-radius: 4px; border: 1px solid #e5dec9; padding: 2mm; background: #fff; }}
+.img-wrap img {{ max-width: 86%; max-height: 175mm; height: auto; border-radius: 4px; padding: 2mm; background: #fff; }}
 </style>
 </head>
 <body>

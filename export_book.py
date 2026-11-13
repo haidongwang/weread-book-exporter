@@ -366,7 +366,10 @@ async def build_pdf(book_id, root, title, author, intro, texts, cover_available=
             f'</div>\n{body_html}</section>'
         )
 
-    cover_img_tag = f'<img class="cover-img" src="{cover_uri}" alt="封面"/>' if cover_uri else ""
+    cover_html = (
+        f'<div class="cover-page"><img src="{cover_uri}" alt="封面"/></div>'
+        if cover_uri else ""
+    )
     intro_html = "".join(f"<p>{p.strip()}</p>" for p in intro.split("\n") if p.strip())
 
     # 跨平台字体加载（Mac/Windows/Linux 全局兼容字体栈）
@@ -382,13 +385,10 @@ body {{
     font-family: "Source Han Serif SC", "思源宋体", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei", sans-serif;
     font-size: 13.2pt; line-height: 1.95; letter-spacing: 0.018em; color: #24272b; margin: 0; padding: 0;
 }}
-.cover-page {{
-    page-break-after: always; text-align: center; padding: 12mm 10mm 8mm 10mm;
-    border: 1.5px solid #d8cebe; border-radius: 6px;
-    background: linear-gradient(180deg, #fdfbf7 0%, #f7f3ea 100%);
-    min-height: 248mm; display: flex; flex-direction: column; justify-content: center; align-items: center;
-}}
-.cover-img {{ max-width: 68mm; max-height: 98mm; height: auto; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.16); margin-bottom: 9mm; border: 2px solid #fff; }}
+@page cover {{ size: A4; margin: 0; }}
+.cover-page {{ page: cover; }}
+.cover-page img {{ display: block; width: 210mm; height: 297mm; object-fit: cover; }}
+.book-info-page {{ break-after: page; text-align: center; padding: 12mm 10mm 8mm; }}
 .cover-title {{ font-family: "STKaiti", "KaiTi", "Kaiti SC", "SimSun", serif; font-size: 24pt; font-weight: bold; color: #1c1917; margin: 0 0 3.5mm 0; }}
 .cover-author {{ font-size: 13.5pt; font-weight: 500; color: #7c2d12; margin-bottom: 8mm; letter-spacing: 0.12em; }}
 .cover-intro {{ text-align: justify; max-width: 148mm; margin: 0 auto; font-size: 11.2pt; line-height: 1.82; color: #3f3c38; background: rgba(255,255,255,0.78); padding: 5.5mm 7mm; border-left: 4px solid #9e2a2b; border-radius: 4px; }}
@@ -434,8 +434,8 @@ p.yw {{
 </style>
 </head>
 <body>
-<div class="cover-page">
-    {cover_img_tag}
+{cover_html}
+<div class="book-info-page">
     <div class="cover-title">{title}</div>
     {f'<div class="cover-author">{author} 著</div>' if author else ''}
     {f'<div class="cover-intro">{intro_html}</div>' if intro_html else ''}
@@ -465,7 +465,7 @@ p.yw {{
             format="A4",
             print_background=True,
             display_header_footer=False,
-            margin={"top": "20mm", "bottom": "19mm", "left": "16.5mm", "right": "16.5mm"},
+            prefer_css_page_size=True,
             tagged=True,
             outline=True,
         )

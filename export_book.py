@@ -111,11 +111,13 @@ def refine_chapter_text(text):
         merged.append(cur)
         idx += 1
 
+    # Keep Markdown headings outside paragraph-joining rules.
+    heading = merged.pop(0) if merged and merged[0].startswith("# ") else ""
     res = "\n\n".join(merged)
     res = re.sub(r"([^\n。！？；：…<>][”）》」])\n\n(?=[^#<\[!\n*])", r"\1", res)
     res = re.sub(r"([，、；——])\n\n(?=[^#<\[!\n*])", r"\1", res)
     res = re.sub(r"([。！？，、；：][“《「][^”》」\n]{1,10}[”》」])\n\n(?=[^#<\[!\n*])", r"\1", res)
-    return res
+    return "\n\n".join(part for part in (heading, res) if part)
 
 
 def read_book(book_id):

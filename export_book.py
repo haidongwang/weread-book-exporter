@@ -454,10 +454,6 @@ p.yw {{
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
 
-    header_author = f"{author} 著" if author else ""
-    header_tmpl = f"""<div style="width:100%; font-size:9pt; font-family:sans-serif; color:#8a8175; padding:0 16.5mm; display:flex; justify-content:space-between; border-bottom:0.5px solid #e4ddd0; padding-bottom:3px;"><span>{title}</span><span>{header_author}</span></div>"""
-    footer_tmpl = """<div style="width:100%; font-size:9.5pt; font-family:sans-serif; color:#787066; padding:0 16.5mm; text-align:center;">— <span class="pageNumber"></span> / <span class="totalPages"></span> —</div>"""
-
     async with async_playwright() as p:
         browser = await launch_browser_headless(p)
         page = await browser.new_page()
@@ -468,9 +464,7 @@ p.yw {{
             path=pdf_path,
             format="A4",
             print_background=True,
-            display_header_footer=True,
-            header_template=header_tmpl,
-            footer_template=footer_tmpl,
+            display_header_footer=False,
             margin={"top": "20mm", "bottom": "19mm", "left": "16.5mm", "right": "16.5mm"},
             tagged=True,
             outline=True,

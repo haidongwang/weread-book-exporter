@@ -402,7 +402,10 @@ def render_md(title, blocks, ch_idx):
         if not buf:
             buf_cls = None
             return
-        if buf_cls == "js":
+        if title.strip() == "版权信息":
+            for line in buf:
+                out.extend((line, ""))
+        elif buf_cls == "js":
             merged = []
             for line in buf:
                 if merged and merged[-1] and not SENT_END_RE.search(merged[-1]):

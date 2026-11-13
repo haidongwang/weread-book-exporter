@@ -48,6 +48,8 @@ def extract_book_id(raw_input):
 
 def refine_chapter_text(text):
     """通用文本清洗：合并被画布折行打断的跨段句子，修复插图穿插导致的断句"""
+    if text.lstrip().split("\n", 1)[0].strip() == "# 版权信息":
+        return text.strip()
     raw_lines = [l.strip() for l in text.split("\n") if l.strip()]
     blocks = []
     i = 0
@@ -120,6 +122,36 @@ def refine_chapter_text(text):
     return "\n\n".join(part for part in (heading, res) if part)
 
 
+def restore_copyright_lines(text, raw_dir):
+    heading, _, body = text.partition("\n")
+    body = body.strip()
+    if heading.strip() != "# 版权信息" or not body or "\n" in body or not os.path.isdir(raw_dir):
+        return text
+    for filename in sorted(os.listdir(raw_dir)):
+        if not (filename.startswith("page_") and filename.endswith(".json")):
+            continue
+        try:
+            with open(os.path.join(raw_dir, filename), encoding="utf-8") as source:
+                lines = json.load(source).get("lines", [])
+        except (OSError, ValueError):
+            continue
+        matched = []
+        remaining = body
+        for line in lines:
+            if not line or not remaining.startswith(line):
+                matched.clear()
+                remaining = body
+                if not line or not remaining.startswith(line):
+                    continue
+            matched.append(line)
+            remaining = remaining[len(line):]
+            if not remaining:
+                if len(matched) > 1:
+                    return heading + "\n\n" + "\n\n".join(matched) + "\n"
+                break
+    return text
+
+
 def read_book(book_id):
     root = os.path.join(BASE, "output", book_id + "_v2")
     ch_dir = os.path.join(root, "chapters")
@@ -159,7 +191,7 @@ def read_book(book_id):
             if h in seen_hash:
                 continue
             seen_hash.add(h)
-            chaps.append(text)
+            chaps.append(restore_copyright_lines(text, raw_dir))
     return root, heads + chaps
 
 
@@ -324,8 +356,9 @@ async def build_pdf(book_id, root, title, author, intro, texts):
             f'<span class="toc-title">{ch_title}</span>'
             f'</a></li>'
         )
+        chapter_class = "chapter copyright-page" if ch_title == "版权信息" else "chapter"
         chap_htmls.append(
-            f'<section class="chapter" id="chap-{i}">'
+            f'<section class="{chapter_class}" id="chap-{i}">'
             f'<div class="chap-header">'
             f'<div class="chap-idx">SECTION {i:02d}</div>'
             f'<h1>{ch_title}</h1>'
@@ -369,6 +402,7 @@ body {{
 .toc-list a {{ text-decoration: none; color: #24272b; display: flex; align-items: center; font-size: 11.8pt; }}
 .toc-num {{ font-size: 9.5pt; background: #f4ece1; color: #9e2a2b; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-right: 3.2mm; min-width: 7.5mm; text-align: center; }}
 .chapter {{ page-break-before: always; }}
+.copyright-page p {{ text-align: center; text-indent: 0; margin: 1.3em 0; }}
 .chap-header {{ text-align: center; margin: 2mm 0 8mm 0; page-break-after: avoid; }}
 .chap-idx {{ font-size: 8.5pt; color: #9e2a2b; letter-spacing: 0.22em; font-weight: 700; margin-bottom: 1.5mm; }}
 h1 {{ font-size: 19.5pt; font-weight: 700; color: #18181b; margin: 0 0 3.5mm 0; }}

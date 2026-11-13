@@ -10,6 +10,7 @@
 import asyncio
 import base64
 import hashlib
+from html import escape
 import json
 import os
 import re
@@ -17,7 +18,7 @@ import sys
 
 from playwright.async_api import async_playwright
 
-from crawl_weread import wrapped_line_separator
+from crawl_weread import norm, wrapped_line_separator
 
 if sys.platform == "win32":
     try:
@@ -338,29 +339,67 @@ async def launch_browser_headless(p):
     raise RuntimeError("未检测到可用浏览器渲染 PDF，请安装 Google Chrome 或 Microsoft Edge")
 
 
+def group_pdf_headings(texts, catalog):
+    """Combine consecutive heading fragments that form one catalog entry."""
+    catalog_keys = {norm(title) for title in catalog}
+    prefixes = {key[:end] for key in catalog_keys for end in range(1, len(key))}
+    chapters = []
+    for i, text in enumerate(texts, 1):
+        first, _, body = refine_chapter_text(text).partition("\n")
+        title = re.sub(r"^#\s*", "", first).strip() or f"第{i}节"
+        chapters.append((title, body))
+
+    idx = 0
+    while idx < len(chapters):
+        title, body = chapters[idx]
+        titles = [title]
+        key = norm(title)
+        end = idx
+        while not chapters[end][1].strip() and key in prefixes and key not in catalog_keys and end + 1 < len(chapters):
+            next_title, _ = chapters[end + 1]
+            key += norm(next_title)
+            titles.append(next_title)
+            end += 1
+            if key in catalog_keys:
+                break
+        if key in catalog_keys:
+            yield titles, chapters[end][1]
+            idx = end + 1
+        else:
+            yield [title], body
+            idx += 1
+
+
 async def build_pdf(book_id, root, title, author, intro, texts, cover_available=True):
     img_dir = os.path.join(root, "images")
     cover_path = os.path.join(root, "cover.jpg")
     cover_uri = img_to_data_uri(cover_path) if cover_available else ""
 
+    catalog = []
+    catalog_path = os.path.join(root, "_catalog.json")
+    if os.path.isfile(catalog_path):
+        try:
+            with open(catalog_path, encoding="utf-8") as source:
+                catalog = json.load(source)
+        except (OSError, ValueError):
+            pass
+
     toc_items, chap_htmls = [], []
-    for i, text in enumerate(texts, 1):
-        text = refine_chapter_text(text)
-        first = text.split("\n", 1)[0]
-        ch_title = re.sub(r"^#\s*", "", first).strip() or f"第{i}节"
-        body_md = text.split("\n", 1)[1] if "\n" in text else ""
+    for i, (titles, body_md) in enumerate(group_pdf_headings(texts, catalog), 1):
+        ch_title = " ".join(titles)
+        heading_html = "<br/>".join(escape(title) for title in titles)
         body_html = md_to_html_simple(body_md, img_dir)
         toc_items.append(
             f'<li><a href="#chap-{i}">'
             f'<span class="toc-num">{i:02d}</span>'
-            f'<span class="toc-title">{ch_title}</span>'
+            f'<span class="toc-title">{escape(ch_title)}</span>'
             f'</a></li>'
         )
         chapter_class = "chapter copyright-page" if ch_title == "版权信息" else "chapter"
         chap_htmls.append(
             f'<section class="{chapter_class}" id="chap-{i}">'
             f'<div class="chap-header">'
-            f'<h1>{ch_title}</h1>'
+            f'<h1>{heading_html}</h1>'
             f'<div class="chap-rule"></div>'
             f'</div>\n{body_html}</section>'
         )
@@ -402,7 +441,7 @@ body {{
 .toc-num {{ font-size: 9.5pt; background: #f4ece1; color: #9e2a2b; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-right: 3.2mm; min-width: 7.5mm; text-align: center; }}
 .chapter {{ page-break-before: always; }}
 .copyright-page p {{ text-align: center; text-indent: 0; margin: 1.3em 0; }}
-.chap-header {{ text-align: center; margin: 2mm 0 8mm 0; page-break-after: avoid; }}
+.chap-header {{ break-inside: avoid; text-align: center; margin: 2mm 0 8mm 0; page-break-after: avoid; }}
 h1 {{ font-size: 19.5pt; font-weight: 700; color: #18181b; margin: 0 0 3.5mm 0; }}
 .chap-rule {{ width: 26mm; height: 2.5px; background: #9e2a2b; margin: 0 auto; border-radius: 2px; }}
 p {{ text-indent: 2em; margin: 0.68em 0; text-align: justify; orphans: 2; widows: 2; }}

@@ -20,7 +20,7 @@ import sys
 import time
 import urllib.request
 
-from playwright.async_api import async_playwright
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright
 
 if sys.platform == "win32":
     try:
@@ -513,7 +513,76 @@ async def launch_browser_context(p, user_data_dir, headless=False):
     raise RuntimeError(f"未能启动浏览器 ({last_err})。请安装 Google Chrome 或 Microsoft Edge，或执行: playwright install chromium")
 
 
-async def main(book_id_or_url, force=False):
+def conflicting_metadata(book_meta, output_dir):
+    """Identify cover or introduction already associated with another cached title."""
+    for name in os.listdir(output_dir):
+        path = os.path.join(output_dir, name, "meta.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                cached = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if not cached.get("title") or norm(cached["title"]) == norm(book_meta["title"]):
+            continue
+        if any(book_meta.get(key) and book_meta[key] == cached.get(key) for key in ("cover", "intro")):
+            return cached["title"]
+    return ""
+
+
+async def read_front_page_metadata(page, title):
+    """Read the visible title spread before the crawler navigates to the body."""
+    if not title:
+        return {}
+    try:
+        await page.click("button.readerControls_item.catalog", timeout=5000)
+        entry = page.locator(".readerCatalog_list_item").filter(has_text=re.compile(r"^\s*扉页(?:\s*当前读到.*)?\s*$"))
+        if await entry.count() != 1:
+            await page.click("button.readerControls_item.catalog", timeout=3000)
+            return {}
+        await entry.click(timeout=5000)
+        result = await page.wait_for_function("""title => {
+            const visible = el => {
+                const r = el.getBoundingClientRect();
+                return r.width && r.height && r.bottom > 0 && r.top < innerHeight
+                    && getComputedStyle(el).visibility === 'visible';
+            };
+            const midpoint = innerWidth / 2;
+            const heading = [...document.querySelectorAll('h1,h2,h3,p,div,span')].find(el =>
+                !el.children.length && el.textContent.trim() === title && visible(el)
+                && el.getBoundingClientRect().right < midpoint
+                && el.getBoundingClientRect().top > 80);
+            if (!heading) return null;
+            const h = heading.getBoundingClientRect();
+            const cover = [...document.images].find(img => {
+                const r = img.getBoundingClientRect();
+                return visible(img) && r.width >= 70 && r.height > r.width
+                    && r.bottom <= h.top && r.left <= (h.left + h.right) / 2
+                    && r.right >= (h.left + h.right) / 2 && img.complete && img.naturalWidth;
+            });
+            const candidates = [...document.querySelectorAll('p,div,section')].filter(el => {
+                const r = el.getBoundingClientRect();
+                const text = (el.innerText || '').trim();
+                return r.left >= midpoint && r.width >= 150 && visible(el)
+                    && text.length >= 50 && /[。！？]/.test(text)
+                    && !el.querySelector('button,a,canvas,img');
+            });
+            const intro = candidates.find(el => !candidates.some(other => other.contains(el) && other !== el));
+            return cover && intro ? {
+                cover: cover.currentSrc || cover.src,
+                intro: intro.innerText.trim(),
+            } : null;
+        }""", arg=title, timeout=7000)
+        return await result.json_value()
+    except PlaywrightTimeoutError:
+        return {}
+    finally:
+        if await page.locator(".readerCatalog_list_item").first.is_visible():
+            await page.keyboard.press("Escape")
+            if await page.locator(".readerCatalog_list_item").first.is_visible():
+                await page.click("button.readerControls_item.catalog", timeout=3000)
+
+
+async def main(book_id_or_url, force=False, metadata_only=False):
     book_id = extract_book_id(book_id_or_url)
     if not book_id:
         print("❌ 错误: 未能解析出有效的微信读书书籍 ID 或链接")
@@ -541,7 +610,7 @@ async def main(book_id_or_url, force=False):
         state = get_crawl_state(book_dir)
 
     # 2. 全书已完成抓取且未指定 --force 时，直接复用已有数据
-    if state.get("completed") and existing_mds and not force:
+    if state.get("completed") and existing_mds and not force and not metadata_only:
         print(f"📖 检测到书籍《{book_id}》此前已完整抓取（共 {len(existing_mds)} 章）。")
         print("⏩ 自动跳过重复抓取，直接复用已有数据进入后续多格式导出流程。")
         print("💡 如需强制重新完整抓取，可在命令行传入 --force 参数。\n")
@@ -553,7 +622,8 @@ async def main(book_id_or_url, force=False):
     async with async_playwright() as p:
         ctx = await launch_browser_context(p, USER_DATA_DIR, headless=False)
         page = await ctx.new_page()
-        await page.add_init_script(HOOK)
+        if not metadata_only:
+            await page.add_init_script(HOOK)
 
         target_url = f"https://weread.qq.com/web/reader/{book_id}"
         print(f"🌐 正在打开书籍阅读页: {target_url} ...", flush=True)
@@ -569,17 +639,12 @@ async def main(book_id_or_url, force=False):
                 await asyncio.sleep(2)
                 if await check_cookies_login(ctx):
                     print("✅ 登录成功，继续执行抓取...", flush=True)
+                    await page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
                     break
             else:
                 print("❌ 扫码登录超时（300秒），导出终止。请重新运行并在弹出的窗口中扫码！", flush=True)
                 await ctx.close()
                 return False
-
-        # 确保处于双栏水平翻页模式
-        if await page.locator("button.readerControls_item.isNormalReader").count() > 0:
-            print("🔄 切换至双栏翻页模式...", flush=True)
-            await page.click("button.readerControls_item.isNormalReader")
-            await asyncio.sleep(3)
 
         # 抓取完整的书籍元数据与原版高清封面
         book_meta = await page.evaluate("""() => {
@@ -592,17 +657,32 @@ async def main(book_id_or_url, force=False):
                 publisher: info.publisher || ''
             };
         }""")
+        # 确保处于双栏水平翻页模式
+        if await page.locator("button.readerControls_item.isNormalReader").count() > 0:
+            print("🔄 切换至双栏翻页模式...", flush=True)
+            await page.click("button.readerControls_item.isNormalReader")
+            await asyncio.sleep(3)
+
+        front_page = await read_front_page_metadata(page, book_meta["title"])
+        if front_page:
+            book_meta.update(front_page)
+            print("📖 已读取扉页显示的封面和简介。", flush=True)
+        else:
+            print("⚠️ 未能从扉页确认封面和简介，继续校验网页元数据。", flush=True)
+
         book_meta["book_id"] = book_id
-        meta_file = os.path.join(book_dir, "meta.json")
-        with open(meta_file, "w", encoding="utf-8") as f:
-            json.dump(book_meta, f, ensure_ascii=False, indent=2)
+        conflict = conflicting_metadata(book_meta, os.path.join(BASE, "output"))
+        if conflict:
+            print(f"⚠️ 封面或简介与另一册书《{conflict}》相同，本次省略这两项。", flush=True)
+            book_meta.update(cover="", intro="")
 
         print(f"📚 书名: {book_meta.get('title')}")
         if book_meta.get("author"):
             print(f"✍️ 作者: {book_meta.get('author')}")
 
         cover_url = book_meta.get("cover")
-        if cover_url:
+        cover_saved = False
+        if cover_url and not conflict:
             cover_path = os.path.join(book_dir, "cover.jpg")
             try:
                 req = urllib.request.Request(cover_url, headers={"Referer": "https://weread.qq.com/", "User-Agent": "Mozilla/5.0"})
@@ -610,9 +690,24 @@ async def main(book_id_or_url, force=False):
                 if len(raw) > 500:
                     with open(cover_path, "wb") as f:
                         f.write(raw)
+                    cover_saved = True
                     print("🖼️ 原版高清封面下载完成")
             except Exception as e:
                 print(f"⚠️ 封面下载跳过: {e}")
+
+        book_meta["cover_available"] = cover_saved
+        meta_file = os.path.join(book_dir, "meta.json")
+        with open(meta_file + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(book_meta, f, ensure_ascii=False, indent=2)
+        os.replace(meta_file + ".tmp", meta_file)
+
+        if metadata_only:
+            await ctx.close()
+            if not cover_saved or not book_meta.get("intro"):
+                print("⚠️ 刷新未取得完整封面和简介。")
+                return False
+            print("✅ 封面和简介已刷新，可以重新导出。")
+            return True
 
         # 读取完整目录列表
         await page.click("button.readerControls_item.catalog", timeout=8000)
@@ -886,7 +981,7 @@ async def main(book_id_or_url, force=False):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("用法: python crawl_weread.py <微信读书链接或ID> [--force] [--rebuild]")
+        print("用法: python crawl_weread.py <微信读书链接或ID> [--force] [--rebuild] [--metadata-only]")
         sys.exit(1)
 
     force_flag = "--force" in sys.argv or "-f" in sys.argv
@@ -899,4 +994,5 @@ if __name__ == "__main__":
         cnt = rebuild_chapters_from_raw(extracted)
         print(f"🎉 已成功从 raw/ 页面落盘数据恢复 {cnt} 个章节！")
     else:
-        asyncio.run(main(extracted, force=force_flag))
+        ok = asyncio.run(main(extracted, force=force_flag, metadata_only="--metadata-only" in sys.argv))
+        sys.exit(0 if ok else 1)

@@ -338,10 +338,10 @@ async def launch_browser_headless(p):
     raise RuntimeError("未检测到可用浏览器渲染 PDF，请安装 Google Chrome 或 Microsoft Edge")
 
 
-async def build_pdf(book_id, root, title, author, intro, texts):
+async def build_pdf(book_id, root, title, author, intro, texts, cover_available=True):
     img_dir = os.path.join(root, "images")
     cover_path = os.path.join(root, "cover.jpg")
-    cover_uri = img_to_data_uri(cover_path)
+    cover_uri = img_to_data_uri(cover_path) if cover_available else ""
 
     toc_items, chap_htmls = [], []
     for i, text in enumerate(texts, 1):
@@ -497,17 +497,19 @@ async def main(book_id_or_url):
     meta_path = os.path.join(root, "meta.json")
     title = f"Book_{book_id}"
     author, intro = "", ""
+    cover_available = True
     if os.path.isfile(meta_path):
         with open(meta_path, encoding="utf-8") as f:
             m = json.load(f)
             title = m.get("title", title)
             author = m.get("author", "")
             intro = m.get("intro", "")
+            cover_available = m.get("cover_available", True)
 
     print(f"\n📦 开始导出全格式电子书: 《{title}》")
     build_markdown_files(book_id, title, texts)
     build_epub(book_id, root, title, author, texts)
-    await build_pdf(book_id, root, title, author, intro, texts)
+    await build_pdf(book_id, root, title, author, intro, texts, cover_available)
     print(f"\n🎉 恭喜！全格式电子书已生成完毕，保存在: output/ 目录\n")
     return True
 

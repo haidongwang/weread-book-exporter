@@ -391,7 +391,7 @@ body {{
 .book-info-page {{ break-after: page; text-align: center; padding: 12mm 10mm 8mm; }}
 .cover-title {{ font-family: "STKaiti", "KaiTi", "Kaiti SC", "SimSun", serif; font-size: 24pt; font-weight: bold; color: #1c1917; margin: 0 0 3.5mm 0; }}
 .cover-author {{ font-size: 13.5pt; font-weight: 500; color: #7c2d12; margin-bottom: 8mm; letter-spacing: 0.12em; }}
-.cover-intro {{ text-align: justify; max-width: 148mm; margin: 0 auto; font-size: 11.2pt; line-height: 1.82; color: #3f3c38; background: rgba(255,255,255,0.78); padding: 5.5mm 7mm; border-left: 4px solid #9e2a2b; border-radius: 4px; }}
+.cover-intro {{ text-align: justify; max-width: 148mm; margin: 0 auto; font-size: 11.2pt; line-height: 1.82; color: #3f3c38; background: rgba(255,255,255,0.78); padding: 5.5mm 7mm; border-radius: 4px; }}
 .cover-intro p {{ text-indent: 2em; margin: 0.45em 0; }}
 .toc-page {{ page-break-after: always; padding: 4mm 2mm; }}
 .toc-header {{ text-align: center; margin-bottom: 8mm; }}

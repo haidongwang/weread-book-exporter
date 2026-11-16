@@ -317,6 +317,33 @@ def split_pages(chars):
     return sorted(pages, key=lambda page: page[0])
 
 
+def completes_heading_quote(title, continuation):
+    return (
+        title.count("“") == title.count("”") + 1
+        and 1 < len(continuation) <= 8
+        and continuation.endswith("”")
+        and "“" not in continuation
+    )
+
+
+def heading_line_continues(previous, line):
+    gap = line["y"] - previous["y"]
+    if 0 < gap < 55:
+        return True
+    if not 0 < gap <= 1.7 * line["size"]:
+        return False
+    if abs(previous["x"] - line["x"]) > line["size"] / 2:
+        return False
+
+    left, right = previous["text"], line["text"]
+    # A closing mark on the next line can complete an unfinished phrase.
+    return any(
+        left.count(opening) > left.count(closing)
+        and right.count(closing) > right.count(opening)
+        for opening, closing in (("“", "”"), ("‘", "’"), ("（", "）"), ("(", ")"), ("《", "》"), ("「", "」"))
+    )
+
+
 def page_lines(chars):
     rows = {}
     for c in chars:
@@ -328,12 +355,16 @@ def page_lines(chars):
         if not text:
             continue
         f = collections.Counter(c["f"] for c in row).most_common(1)[0][0]
-        raw_lines.append({"y": yk, "text": text, "cls": cls_of(f), "size": round(size_of(f), 1)})
+        raw_lines.append({
+            "x": row[0]["x"], "y": yk, "text": text,
+            "cls": cls_of(f), "size": round(size_of(f), 1),
+        })
 
     out = []
     for ln in raw_lines:
         if (out and out[-1]["cls"] == "title" and ln["cls"] == "title"
-                and out[-1]["size"] == ln["size"] and ln["y"] - out[-1]["y"] < 55):
+                and out[-1]["size"] == ln["size"]
+                and heading_line_continues(out[-1], ln)):
             out[-1]["text"] += wrapped_line_separator(out[-1]["text"], ln["text"]) + ln["text"]
             out[-1]["y"] = ln["y"]
         else:
@@ -784,6 +815,7 @@ async def main(book_id_or_url, force=False, metadata_only=False):
         await wait_stable_chars(page, timeout=5.0)
 
         cur_title = catalog[nav_idx] if catalog and nav_idx < len(catalog) else "扉页"
+        catalog_keys = {norm(title) for title in catalog}
         seen_titles = set(completed_titles + [cur_title])
         saved_idx = len(completed_titles)
         buf = []
@@ -843,6 +875,20 @@ async def main(book_id_or_url, force=False, metadata_only=False):
                     step_words += len(txt)
 
                     matched_title, remainder = match_catalog_title(txt, catalog, seen_titles)
+
+                    # A heading may span separate Canvas batches. Join it
+                    # before the chapter boundary commits either fragment.
+                    if (
+                        captured_heading and not buf and ln["cls"] == "title"
+                        and not matched_title
+                        and norm(cur_title) not in catalog_keys
+                        and norm(txt) not in catalog_keys
+                        and completes_heading_quote(cur_title, txt)
+                    ):
+                        seen_titles.discard(cur_title)
+                        cur_title += wrapped_line_separator(cur_title, txt) + txt
+                        seen_titles.add(cur_title)
+                        continue
 
                     is_new_chapter = False
                     new_title = ""

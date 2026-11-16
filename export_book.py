@@ -384,14 +384,18 @@ async def build_pdf(book_id, root, title, author, intro, texts, cover_available=
         except (OSError, ValueError):
             pass
 
+    catalog_keys = {norm(label) for label in catalog if norm(label)}
     toc_items, chap_htmls = [], []
     for i, (titles, body_md) in enumerate(group_pdf_headings(texts, catalog), 1):
         ch_title = " ".join(titles)
         heading_html = "<br/>".join(escape(title) for title in titles)
         body_html = md_to_html_simple(body_md, img_dir)
+        if catalog_keys and norm(ch_title) not in catalog_keys:
+            chap_htmls.append(f'<div class="subsection-title">{heading_html}</div>\n{body_html}')
+            continue
         toc_items.append(
             f'<li><a href="#chap-{i}">'
-            f'<span class="toc-num">{i:02d}</span>'
+            f'<span class="toc-num">{len(toc_items) + 1:02d}</span>'
             f'<span class="toc-title">{escape(ch_title)}</span>'
             f'</a></li>'
         )
@@ -440,6 +444,7 @@ body {{
 .toc-list a {{ text-decoration: none; color: #24272b; display: flex; align-items: center; font-size: 11.8pt; }}
 .toc-num {{ font-size: 9.5pt; background: #f4ece1; color: #9e2a2b; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-right: 3.2mm; min-width: 7.5mm; text-align: center; }}
 .chapter {{ page-break-before: always; }}
+.subsection-title {{ font-size: 15pt; font-weight: bold; margin: 1em 0 .4em; break-after: avoid; break-inside: avoid; }}
 .copyright-page p {{ text-align: center; text-indent: 0; margin: 1.3em 0; }}
 .chap-header {{ break-inside: avoid; text-align: center; margin: 2mm 0 8mm 0; page-break-after: avoid; }}
 h1 {{ font-size: 19.5pt; font-weight: 700; color: #18181b; margin: 0 0 3.5mm 0; }}

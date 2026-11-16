@@ -13,6 +13,7 @@
 import asyncio
 import collections
 import json
+import hashlib
 import os
 import random
 import re
@@ -160,6 +161,7 @@ def download_all_images(raw_dir, img_dir):
                 except Exception:
                     pass
 
+    tasks = dict.fromkeys(tasks)
     ok_img = 0
     for url, name in tasks:
         if not name:
@@ -214,7 +216,10 @@ HOOK = """
         if (typeof text === 'string' && text.length) {
             var rect = this.canvas.getBoundingClientRect();
             var side = rect.left + rect.width / 2 >= window.innerWidth / 2 ? 1 : 0;
+            const point = this.getTransform().transformPoint({x, y});
+            const viewportY = rect.top + point.y * rect.height / (this.canvas.height || 1);
             window.__wr_chars.push({
+                viewport_y: viewportY,
                 t: text,
                 x: Math.round(x * 10) / 10,
                 y: Math.round(y * 10) / 10,
@@ -244,7 +249,7 @@ IMGS_JS = """
         if (r.width > 40 && r.height > 40 && r.bottom > 0 && r.top < H &&
             r.right > 0 && r.left < W &&
             getComputedStyle(i).visibility !== 'hidden' && getComputedStyle(i).display !== 'none')
-            out.push({src, top: Math.round(r.top), left: Math.round(r.left)});
+            out.push({src, top: r.top, left: r.left, side: r.left + r.width / 2 >= W / 2 ? 1 : 0});
     });
     return out;
 }
@@ -357,6 +362,7 @@ def page_lines(chars):
         f = collections.Counter(c["f"] for c in row).most_common(1)[0][0]
         raw_lines.append({
             "x": row[0]["x"], "y": yk, "text": text,
+            "viewport_y": row[0].get("viewport_y", yk),
             "cls": cls_of(f), "size": round(size_of(f), 1),
         })
 
@@ -370,6 +376,12 @@ def page_lines(chars):
         else:
             out.append(ln)
     return out
+
+
+def ordered_page_content(lines, images):
+    items = [(line["viewport_y"], False, line) for line in lines]
+    items.extend((image["top"], True, image) for image in images)
+    return [(is_image, item) for _, is_image, item in sorted(items, key=lambda item: item[0])]
 
 
 def match_catalog_title(text, catalog, seen_titles):
@@ -426,7 +438,6 @@ def wrapped_line_separator(left, right):
 def render_md(title, blocks, ch_idx):
     out = ["# %s\n" % title]
     buf, buf_cls = [], None
-    img_n = 0
 
     def flush():
         nonlocal buf, buf_cls
@@ -464,12 +475,12 @@ def render_md(title, blocks, ch_idx):
     for b in blocks:
         if b["type"] == "img":
             flush()
-            img_n += 1
             ext = "jpg"
             m = re.search(r"\.(jpg|jpeg|png|gif|webp)", b["src"].lower())
             if m:
                 ext = m.group(1).replace("jpeg", "jpg")
-            name = "ch%04d_img%02d.%s" % (ch_idx, img_n, ext)
+            digest = hashlib.sha256(b["src"].encode("utf-8")).hexdigest()
+            name = f"img_{digest}.{ext}"
             out.append("![图](images/%s)\n" % name)
             imgs.append({"src": b["src"], "name": name})
             continue
@@ -825,7 +836,7 @@ async def main(book_id_or_url, force=False, metadata_only=False):
         last_after_seen = 0
         last_cat = norm(catalog[-1]) if catalog else ""
         seen_page_sigs = set()
-        seen_imgs = set()
+        previous_spread = None
 
         raw_pages = sorted([f for f in os.listdir(raw_dir) if f.startswith("page_") and f.endswith(".json")])
         start_step = len(raw_pages) if resume_cat_idx > 0 else 0
@@ -852,25 +863,46 @@ async def main(book_id_or_url, force=False, metadata_only=False):
             imgs = await page.evaluate(IMGS_JS)
 
             pages = split_pages(chars)
-            left_imgs = [im for im in imgs if im["left"] < 600]
-            right_imgs = [im for im in imgs if im["left"] >= 600]
-
             got_any = False
             step_words = 0
             page_blocks = []
+            lines_by_side = {0: [], 1: []}
 
+            text_signatures = []
             for side, pchars in pages:
                 lines = page_lines(pchars)
                 if not lines:
                     continue
                 sig = norm("".join(ln["text"] for ln in lines))
+                text_signatures.append((side, sig))
                 if len(sig) > 8 and sig in seen_page_sigs:
                     continue
                 if len(sig) > 8:
                     seen_page_sigs.add(sig)
-                got_any = True
+                lines_by_side[side].extend(lines)
 
-                for ln in lines:
+            images_at_positions = {
+                (im["side"], round(im["left"]), round(im["top"]), im["src"]): im for im in imgs
+            }
+            spread = (tuple(dict.fromkeys(text_signatures)), frozenset(images_at_positions))
+            # A repeated rendering of the same spread does not add new images.
+            if spread == previous_spread or (not text_signatures and previous_spread
+                                             and spread[1] == previous_spread[1]):
+                images_at_positions.clear()
+            else:
+                previous_spread = spread
+
+            for side, lines in lines_by_side.items():
+                side_images = [im for im in images_at_positions.values() if im["side"] == side]
+                for is_image, ln in ordered_page_content(lines, side_images):
+                    if is_image:
+                        img_blk = {"type": "img", "src": ln["src"]}
+                        buf.append(img_blk)
+                        page_blocks.append(img_blk)
+                        got_any = True
+                        continue
+
+                    got_any = True
                     txt = ln["text"].strip()
                     step_words += len(txt)
 
@@ -942,24 +974,6 @@ async def main(book_id_or_url, force=False, metadata_only=False):
                     line_blk = {"type": "line", "cls": ln["cls"], "text": txt}
                     buf.append(line_blk)
                     page_blocks.append(line_blk)
-
-                side_imgs = left_imgs if side == 0 else right_imgs
-                for im in side_imgs:
-                    if im["src"] not in seen_imgs:
-                        seen_imgs.add(im["src"])
-                        img_blk = {"type": "img", "src": im["src"]}
-                        buf.append(img_blk)
-                        page_blocks.append(img_blk)
-                        got_any = True
-
-            if not pages and imgs:
-                for im in imgs:
-                    if im["src"] not in seen_imgs:
-                        seen_imgs.add(im["src"])
-                        img_blk = {"type": "img", "src": im["src"]}
-                        buf.append(img_blk)
-                        page_blocks.append(img_blk)
-                        got_any = True
 
             total_words_accum += step_words
 

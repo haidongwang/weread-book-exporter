@@ -393,8 +393,12 @@ async def build_pdf(book_id, root, title, author, intro, texts, cover_available=
         if catalog_keys and norm(ch_title) not in catalog_keys:
             chap_htmls.append(f'<div class="subsection-title">{heading_html}</div>\n{body_html}')
             continue
+        is_section = norm(ch_title) in catalog_keys and re.match(
+            r"^[一二三四五六七八九十百]+(?:[、．.]\s*|\s+)", ch_title
+        )
+        toc_class = ' class="toc-section"' if is_section else ""
         toc_items.append(
-            f'<li><a href="#chap-{i}">'
+            f'<li{toc_class}><a href="#chap-{i}">'
             f'<span class="toc-num">{len(toc_items) + 1:02d}</span>'
             f'<span class="toc-title">{escape(ch_title)}</span>'
             f'</a></li>'
@@ -442,6 +446,7 @@ body {{
 .toc-list {{ list-style: none; padding: 0; margin: 0; column-count: 2; column-gap: 10mm; }}
 .toc-list li {{ margin: 2.8mm 0; break-inside: avoid; border-bottom: 1px dashed #dfd8cc; padding-bottom: 1.8mm; }}
 .toc-list a {{ text-decoration: none; color: #24272b; display: flex; align-items: center; font-size: 11.8pt; }}
+.toc-list .toc-section a {{ padding-inline-start: 2em; }}
 .toc-num {{ font-size: 9.5pt; background: #f4ece1; color: #9e2a2b; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-right: 3.2mm; min-width: 7.5mm; text-align: center; }}
 .chapter {{ page-break-before: always; }}
 .subsection-title {{ font-size: 15pt; font-weight: bold; margin: 1em 0 .4em; break-after: avoid; break-inside: avoid; }}

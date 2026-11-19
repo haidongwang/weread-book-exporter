@@ -624,6 +624,17 @@ async def read_front_page_metadata(page, title):
                 await page.click("button.readerControls_item.catalog", timeout=3000)
 
 
+def advance_catalog(catalog, index, text, style):
+    """Advance one entry in reading order, including repeated labels."""
+    next_index = index + 1
+    if next_index >= len(catalog):
+        return index
+    key = norm(text)
+    if key == norm(catalog[next_index]) and (style == "title" or len(key) >= 2):
+        return next_index
+    return index
+
+
 async def main(book_id_or_url, force=False, metadata_only=False):
     book_id = extract_book_id(book_id_or_url)
     if not book_id:
@@ -778,6 +789,11 @@ async def main(book_id_or_url, force=False, metadata_only=False):
             except Exception:
                 pass
 
+        if completed_titles and len({norm(label) for label in catalog}) != len(catalog):
+            print("⚠️ 目录有同名条目，无法从旧章节标题安全定位。请先备份书籍缓存目录，再重新抓取。")
+            await ctx.close()
+            return False
+
         resume_cat_idx = 0
         if completed_titles and catalog:
             last_done_norm = norm(completed_titles[-1])
@@ -832,9 +848,8 @@ async def main(book_id_or_url, force=False, metadata_only=False):
         buf = []
         captured_heading = False
         stale = 0
-        seen_last = False
-        last_after_seen = 0
-        last_cat = norm(catalog[-1]) if catalog else ""
+        catalog_index = nav_idx
+        crawl_completed = False
         seen_page_sigs = set()
         previous_spread = None
 
@@ -906,7 +921,15 @@ async def main(book_id_or_url, force=False, metadata_only=False):
                     txt = ln["text"].strip()
                     step_words += len(txt)
 
-                    matched_title, remainder = match_catalog_title(txt, catalog, seen_titles)
+                    next_index = advance_catalog(catalog, catalog_index, txt, ln["cls"])
+                    if next_index != catalog_index:
+                        catalog_index = next_index
+                        matched_title, remainder = catalog[catalog_index], ""
+                    else:
+                        matched_title, remainder = match_catalog_title(txt, catalog, seen_titles)
+                        if (matched_title and catalog_index + 1 < len(catalog)
+                                and matched_title == catalog[catalog_index + 1]):
+                            catalog_index += 1
 
                     # A heading may span separate Canvas batches. Join it
                     # before the chapter boundary commits either fragment.
@@ -959,8 +982,6 @@ async def main(book_id_or_url, force=False, metadata_only=False):
                         captured_heading = True
                         seen_titles.add(cur_title)
                         print(f"\n  📑 [第 {step:03d} 页] 识别新章节: 《{cur_title}》", flush=True)
-                        if last_cat and norm(cur_title) == last_cat:
-                            seen_last = True
 
                         if remainder:
                             rem_blk = {"type": "line", "cls": "js", "text": remainder}
@@ -995,18 +1016,12 @@ async def main(book_id_or_url, force=False, metadata_only=False):
             if got_any:
                 stale = 0
                 print(f"  [进度 第 {step:03d} 页] 本页 +{step_words:3d} 字 | 累计 {total_words_accum:6d} 字 | 所在: 《{cur_title[:12]}》 | 已用时 {elapsed_str}", flush=True)
-                if seen_last:
-                    last_after_seen += 1
-                    if last_after_seen >= 4:
-                        print("  🏁 末章内容已抓取完成", flush=True)
-                        break
             else:
                 stale += 1
-                if seen_last and stale >= 2:
-                    print("  🏁 已到达末章且无新内容，抓取完成", flush=True)
-                    break
                 if stale >= 8:
-                    print(f"  🏁 连续 {stale} 页无新内容，判定全书抓取结束", flush=True)
+                    crawl_completed = bool(catalog) and catalog_index == len(catalog) - 1
+                    if not crawl_completed:
+                        print(f"⚠️ 连续 {stale} 次无新内容，尚未确认到达目录末项。", flush=True)
                     break
 
         if cur_title and (buf or captured_heading):
@@ -1021,7 +1036,7 @@ async def main(book_id_or_url, force=False, metadata_only=False):
 
         save_crawl_state(book_dir, {
             "book_id": book_id,
-            "completed": True,
+            "completed": crawl_completed,
             "last_step": step,
             "saved_chapter_count": saved_idx,
             "last_title": cur_title,
@@ -1030,13 +1045,14 @@ async def main(book_id_or_url, force=False, metadata_only=False):
         })
 
         print(f"\n" + "="*50)
-        print(f"🎉 抓取成功！全书已保存 {saved_idx} 个章节，累计 {total_words_accum} 字")
+        status = "抓取完成" if crawl_completed else "抓取未完成，已保留本地进度"
+        print(f"{status}，已保存 {saved_idx} 个章节，累计 {total_words_accum} 字")
         print("="*50)
         await ctx.close()
 
     # 统一补齐配图下载
     download_all_images(raw_dir, img_dir)
-    return True
+    return crawl_completed
 
 
 if __name__ == "__main__":

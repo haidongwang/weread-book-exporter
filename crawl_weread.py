@@ -218,8 +218,16 @@ HOOK = """
             var side = rect.left + rect.width / 2 >= window.innerWidth / 2 ? 1 : 0;
             const point = this.getTransform().transformPoint({x, y});
             const viewportY = rect.top + point.y * rect.height / (this.canvas.height || 1);
+            const width = this.measureText(text).width;
+            const align = this.textAlign;
+            const rightAligned = align === 'right' || (align === 'end' && this.direction !== 'rtl')
+                || (align === 'start' && this.direction === 'rtl');
+            const textLeft = x - (align === 'center' ? width / 2 : rightAligned ? width : 0);
             window.__wr_chars.push({
                 viewport_y: viewportY,
+                text_left: textLeft,
+                text_right: textLeft + width,
+                text_align: align,
                 t: text,
                 x: Math.round(x * 10) / 10,
                 y: Math.round(y * 10) / 10,
@@ -363,6 +371,10 @@ def page_lines(chars):
         raw_lines.append({
             "x": row[0]["x"], "y": yk, "text": text,
             "viewport_y": row[0].get("viewport_y", yk),
+            "left": min(c.get("text_left", c["x"]) for c in row),
+            "right": max(c.get("text_right", c["x"]) for c in row),
+            "align": collections.Counter(c.get("text_align", "") for c in row).most_common(1)[0][0],
+            "has_bounds": all("text_right" in c for c in row),
             "cls": cls_of(f), "size": round(size_of(f), 1),
         })
 
@@ -376,6 +388,54 @@ def page_lines(chars):
         else:
             out.append(ln)
     return out
+
+
+def copyright_layout(lines):
+    """Require measured text bounds before interpreting alignment."""
+    rows = [line for line in lines if line.get("has_bounds") and len(line["text"]) >= 4]
+    if len(rows) < 3:
+        return None
+    tolerance = max(line["size"] for line in rows) * 0.6
+    centers = [(line["left"] + line["right"]) / 2 for line in rows]
+    starts = [line["left"] for line in rows]
+    if (all(line["align"] == "center" for line in rows)
+            or (max(centers) - min(centers) <= tolerance
+                and max(starts) - min(starts) > tolerance * 2)):
+        return "center"
+    # Paragraphs may indent their first line. Look for repeated left edges
+    # with varying line lengths, including short lines at paragraph ends.
+    aligned = max(sum(abs(x - other) <= tolerance for other in starts) for x in starts)
+    widths = [line["right"] - line["left"] for line in rows]
+    if aligned >= 3 and max(widths) - min(widths) > tolerance * 2:
+        return "left"
+    return None
+
+
+def copyright_body_line(lines, centered_copyright):
+    """Find an aligned body after a measured, centered copyright prefix."""
+    for index in range(len(lines)):
+        prefix = lines[:index]
+        following = lines[index:index + 6]
+        if not (centered_copyright or copyright_layout(prefix) == "center"):
+            continue
+        if len(following) < 3 or copyright_layout(following) != "left":
+            continue
+        first_rows = following[:3]
+        if not all(row.get("has_bounds") for row in first_rows):
+            continue
+        tolerance = max(row["size"] for row in first_rows) * 0.6
+        starts = [row["left"] for row in first_rows]
+        if max(starts) - min(starts) <= tolerance:
+            return lines[index]
+    return None
+
+
+def untitled_front_boundary(lines, images, centered_copyright):
+    if not centered_copyright or copyright_layout(lines) != "left" or not images:
+        return None
+    first_y = min(line["viewport_y"] for line in lines)
+    preceding = [image["top"] for image in images if image["top"] < first_y]
+    return min(preceding) if preceding else None
 
 
 def ordered_page_content(lines, images):
@@ -852,6 +912,7 @@ async def main(book_id_or_url, force=False, metadata_only=False):
         crawl_completed = False
         seen_page_sigs = set()
         previous_spread = None
+        centered_copyright = False
 
         raw_pages = sorted([f for f in os.listdir(raw_dir) if f.startswith("page_") and f.endswith(".json")])
         start_step = len(raw_pages) if resume_cat_idx > 0 else 0
@@ -909,13 +970,40 @@ async def main(book_id_or_url, force=False, metadata_only=False):
 
             for side, lines in lines_by_side.items():
                 side_images = [im for im in images_at_positions.values() if im["side"] == side]
-                for is_image, ln in ordered_page_content(lines, side_images):
+                content = ordered_page_content(lines, side_images)
+                # Inspect all lines before consuming the spread: the copyright
+                # heading itself can occur later in this same batch.
+                first_body = copyright_body_line(lines, centered_copyright)
+                centered_copyright = centered_copyright or copyright_layout(lines) == "center"
+                boundary = untitled_front_boundary(lines, side_images, centered_copyright)
+                copyright_entries = [i for i, label in enumerate(catalog) if label == "版权信息"]
+                if ((first_body is not None or boundary is not None)
+                        and len(copyright_entries) == 1
+                        and copyright_entries[0] + 1 < len(catalog)):
+                    next_title = catalog[copyright_entries[0] + 1]
+                    insertion = 0
+                    if first_body is not None:
+                        insertion = next(
+                            i for i, (is_image, item) in enumerate(content)
+                            if not is_image and item is first_body
+                        )
+                    content.insert(insertion, (False, {
+                        "text": next_title, "cls": "title",
+                        "copyright_boundary": copyright_entries[0] + 1,
+                    }))
+                for is_image, ln in content:
                     if is_image:
                         img_blk = {"type": "img", "src": ln["src"]}
                         buf.append(img_blk)
                         page_blocks.append(img_blk)
                         got_any = True
                         continue
+
+                    if "copyright_boundary" in ln:
+                        if cur_title != "版权信息":
+                            continue
+                        catalog_index = ln["copyright_boundary"] - 1
+                        print(f"📐 检测到版权页结束，切换到目录项《{ln['text']}》。", flush=True)
 
                     got_any = True
                     txt = ln["text"].strip()
@@ -992,7 +1080,10 @@ async def main(book_id_or_url, force=False, metadata_only=False):
                     if buf and buf[-1]["type"] == "line" and buf[-1]["text"] == txt and buf[-1]["cls"] == ln["cls"]:
                         continue
 
-                    line_blk = {"type": "line", "cls": ln["cls"], "text": txt}
+                    line_blk = {"type": "line", "cls": ln["cls"], "text": txt,
+                                "layout": {key: ln[key] for key in
+                                           ("left", "right", "viewport_y", "size", "align")
+                                           if key in ln}, "side": side}
                     buf.append(line_blk)
                     page_blocks.append(line_blk)
 

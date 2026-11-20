@@ -438,11 +438,11 @@ async def build_pdf(book_id, root, title, author, intro, texts, cover_available=
 <meta charset="utf-8"/>
 <title>{title}</title>
 <style>
-@page {{ size: A4; margin: 20mm 16.5mm 19mm 16.5mm; }}
+@page {{ size: A4; margin: 20mm calc((210mm - 490pt) / 2) 22mm; }}
 * {{ box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }}
 body {{
     font-family: "Source Han Serif SC", "思源宋体", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei", sans-serif;
-    font-size: 13.2pt; line-height: 1.95; letter-spacing: 0.018em; color: #24272b; margin: 0; padding: 0;
+    font-size: 14pt; line-height: 1.8; letter-spacing: 0; color: #24272b; margin: 0; padding: 0;
 }}
 @page cover {{ size: A4; margin: 0; }}
 .cover-page {{ page: cover; }}
@@ -469,7 +469,7 @@ p.right {{ text-align: right; text-indent: 0; }}
 .chap-header {{ break-inside: avoid; text-align: center; margin: 2mm 0 8mm 0; page-break-after: avoid; }}
 h1 {{ font-size: 19.5pt; font-weight: 700; color: #18181b; margin: 0 0 3.5mm 0; }}
 .chap-rule {{ width: 26mm; height: 2.5px; background: #9e2a2b; margin: 0 auto; border-radius: 2px; }}
-p {{ text-indent: 2em; margin: 0.68em 0; text-align: justify; orphans: 2; widows: 2; }}
+p {{ text-indent: 2em; margin: 0; text-align: justify; orphans: 2; widows: 2; }}
 p strong {{ font-weight: 700; color: #111315; }}
 p.sub-head {{ text-indent: 0; margin: 1.1em 0 0.5em 0; font-size: 14pt; color: #7c2d12; border-left: 3.5px solid #9e2a2b; padding-left: 3mm; page-break-after: avoid; }}
 p.yw {{

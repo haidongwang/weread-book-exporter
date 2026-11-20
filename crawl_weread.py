@@ -14,6 +14,7 @@ import asyncio
 import collections
 import json
 import hashlib
+from html import escape
 import os
 import random
 import re
@@ -357,6 +358,35 @@ def heading_line_continues(previous, line):
     )
 
 
+def mark_right_aligned_lines(lines):
+    """Preserve isolated short lines anchored near the body column's right edge."""
+    measured = [line for line in lines if line.get("has_bounds")]
+    body = [line for line in measured if line["cls"] == "js" and len(line["text"]) >= 12]
+    if len(body) < 2:
+        return
+    left_edge = min(line["left"] for line in body)
+    right_edge = max(line["right"] for line in body)
+    width = right_edge - left_edge
+    if width <= 0:
+        return
+    full_lines = [line for line in body if line["right"] - line["left"] >= width * 0.7]
+    if len(full_lines) < 2:
+        return
+    for index, line in enumerate(lines):
+        if not line.get("has_bounds") or line["cls"] == "title":
+            continue
+        short = len(line["text"]) <= 24 and line["right"] - line["left"] <= width * 0.4
+        anchored = (line["left"] >= left_edge + width * 0.55
+                    and abs(right_edge - line["right"]) <= line["size"] * 1.5)
+        neighbors = lines[max(0, index - 1):index] + lines[index + 1:index + 2]
+        separated = all(
+            abs(other.get("y", other["viewport_y"]) - line.get("y", line["viewport_y"])) >= line["size"] * 1.5
+            for other in neighbors
+        )
+        if short and anchored and (separated or line.get("align") in ("right", "end")):
+            line["alignment"] = "right"
+
+
 def page_lines(chars):
     rows = {}
     for c in chars:
@@ -387,6 +417,7 @@ def page_lines(chars):
             out[-1]["y"] = ln["y"]
         else:
             out.append(ln)
+    mark_right_aligned_lines(out)
     return out
 
 
@@ -543,6 +574,10 @@ def render_md(title, blocks, ch_idx):
             name = f"img_{digest}.{ext}"
             out.append("![图](images/%s)\n" % name)
             imgs.append({"src": b["src"], "name": name})
+            continue
+        if b.get("alignment") == "right":
+            flush()
+            out.extend(('<p class="right">%s</p>' % escape(b["text"]), ""))
             continue
         if b["cls"] != buf_cls:
             flush()
@@ -1083,7 +1118,7 @@ async def main(book_id_or_url, force=False, metadata_only=False):
                     line_blk = {"type": "line", "cls": ln["cls"], "text": txt,
                                 "layout": {key: ln[key] for key in
                                            ("left", "right", "viewport_y", "size", "align")
-                                           if key in ln}, "side": side}
+                                           if key in ln}, "side": side, "alignment": ln.get("alignment")}
                     buf.append(line_blk)
                     page_blocks.append(line_blk)
 

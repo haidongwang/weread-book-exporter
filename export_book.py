@@ -210,6 +210,7 @@ def build_markdown_files(book_id, title, texts):
     for t in refined:
         t = re.sub(r'<p class="yw">(.*?)</p>', r'> **\1**', t)
         t = re.sub(r'<p class="fang">(.*?)</p>', r'> *\1*', t)
+        t = re.sub(r'<p class="right">(.*?)</p>', r'\1', t)
         pure_chaps.append(t)
 
     pure_md_path = os.path.join(out_dir, f"{safe_title}_纯Markdown笔记版.md")
@@ -239,6 +240,7 @@ def build_epub(book_id, root, title, author, texts):
     body { font-family: "Songti SC", "SimSun", "Noto Serif CJK SC", serif; line-height: 1.85; font-size: 1em; margin: 0.6em 0.8em; }
     h1 { font-size: 1.35em; margin: 1.2em 0 0.9em; text-align: center; }
     p { text-indent: 2em; margin: 0.55em 0; }
+    p.right { text-align: right; text-indent: 0; }
     p.yw { font-family: "Kaiti SC", "KaiTi", "STKaiti", "楷体", serif; font-size: 1.05em; text-indent: 0; margin: 0.9em 0; padding: 0.5em 0.75em; border-left: 3px solid #9e2a2b; background-color: #f7f5ef; }
     p.fang { font-family: "Kaiti SC", "KaiTi", "STKaiti", "楷体", serif; font-weight: bold; text-indent: 0; margin: 0.45em 0 0.45em 1.2em; }
     img { max-width: 100%; height: auto; display: block; margin: 1em auto; text-indent: 0; }
@@ -309,6 +311,9 @@ def md_to_html_simple(md_text, img_dir):
             uri = img_to_data_uri(os.path.join(img_dir, fn))
             if uri:
                 out.append(f'<div class="img-wrap"><img src="{uri}" alt="{fn}"/></div>')
+            continue
+        if line.startswith('<p class="right">') and line.endswith("</p>"):
+            out.append(line)
             continue
         if line.startswith('<p class="yw">') and line.endswith("</p>"):
             inner = line[len('<p class="yw">'):-len("</p>")].strip()
@@ -450,6 +455,7 @@ body {{
 .toc-num {{ font-size: 9.5pt; background: #f4ece1; color: #9e2a2b; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-right: 3.2mm; min-width: 7.5mm; text-align: center; }}
 .chapter {{ page-break-before: always; }}
 .subsection-title {{ font-size: 15pt; font-weight: bold; margin: 1em 0 .4em; break-after: avoid; break-inside: avoid; }}
+p.right {{ text-align: right; text-indent: 0; }}
 .copyright-page p {{ text-align: center; text-indent: 0; margin: 1.3em 0; }}
 .chap-header {{ break-inside: avoid; text-align: center; margin: 2mm 0 8mm 0; page-break-after: avoid; }}
 h1 {{ font-size: 19.5pt; font-weight: 700; color: #18181b; margin: 0 0 3.5mm 0; }}

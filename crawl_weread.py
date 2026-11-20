@@ -258,7 +258,7 @@ IMGS_JS = """
         if (r.width > 40 && r.height > 40 && r.bottom > 0 && r.top < H &&
             r.right > 0 && r.left < W &&
             getComputedStyle(i).visibility !== 'hidden' && getComputedStyle(i).display !== 'none')
-            out.push({src, top: r.top, left: r.left, side: r.left + r.width / 2 >= W / 2 ? 1 : 0});
+            out.push({src, top: r.top, bottom: r.bottom, left: r.left, side: r.left + r.width / 2 >= W / 2 ? 1 : 0});
     });
     return out;
 }
@@ -421,6 +421,33 @@ def page_lines(chars):
     return out
 
 
+def mark_image_captions(content, lines):
+    measured = [line for line in lines if line.get("has_bounds") and line["cls"] != "title"]
+    if not measured:
+        return
+    left = min(line["left"] for line in measured)
+    right = max(line["right"] for line in measured)
+    width = right - left
+    previous_image = None
+    for is_image, item in content:
+        if is_image:
+            previous_image = item
+            continue
+        if previous_image is None:
+            continue
+        center = (item.get("left", left) + item.get("right", right)) / 2
+        centered = (item.get("has_bounds") and width > 0
+                    and abs(center - (left + right) / 2) <= item["size"] * 0.6
+                    and item["left"] > left + item["size"]
+                    and item["right"] < right - item["size"])
+        gap = item["viewport_y"] - previous_image.get("bottom", float("inf"))
+        if (centered and item["cls"] != "title" and len(item["text"]) <= 80
+                and 0 <= gap <= item["size"] * 3):
+            item["caption_for"] = previous_image["src"]
+            item["alignment"] = "center"
+        previous_image = None
+
+
 def copyright_layout(lines):
     """Require measured text bounds before interpreting alignment."""
     rows = [line for line in lines if line.get("has_bounds") and len(line["text"]) >= 4]
@@ -574,6 +601,10 @@ def render_md(title, blocks, ch_idx):
             name = f"img_{digest}.{ext}"
             out.append("![图](images/%s)\n" % name)
             imgs.append({"src": b["src"], "name": name})
+            continue
+        if b.get("caption_for"):
+            flush()
+            out.extend(('<p class="caption">%s</p>' % escape(b["text"]), ""))
             continue
         if b.get("alignment") == "right":
             flush()
@@ -1006,6 +1037,7 @@ async def main(book_id_or_url, force=False, metadata_only=False):
             for side, lines in lines_by_side.items():
                 side_images = [im for im in images_at_positions.values() if im["side"] == side]
                 content = ordered_page_content(lines, side_images)
+                mark_image_captions(content, lines)
                 # Inspect all lines before consuming the spread: the copyright
                 # heading itself can occur later in this same batch.
                 first_body = copyright_body_line(lines, centered_copyright)
@@ -1028,7 +1060,9 @@ async def main(book_id_or_url, force=False, metadata_only=False):
                     }))
                 for is_image, ln in content:
                     if is_image:
-                        img_blk = {"type": "img", "src": ln["src"]}
+                        img_blk = {"type": "img", "src": ln["src"],
+                                   "layout": {key: ln[key] for key in
+                                              ("top", "bottom", "left", "side") if key in ln}}
                         buf.append(img_blk)
                         page_blocks.append(img_blk)
                         got_any = True
@@ -1118,7 +1152,8 @@ async def main(book_id_or_url, force=False, metadata_only=False):
                     line_blk = {"type": "line", "cls": ln["cls"], "text": txt,
                                 "layout": {key: ln[key] for key in
                                            ("left", "right", "viewport_y", "size", "align")
-                                           if key in ln}, "side": side, "alignment": ln.get("alignment")}
+                                           if key in ln}, "side": side, "alignment": ln.get("alignment"),
+                                "caption_for": ln.get("caption_for")}
                     buf.append(line_blk)
                     page_blocks.append(line_blk)
 

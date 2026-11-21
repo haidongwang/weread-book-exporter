@@ -49,6 +49,10 @@ def extract_book_id(raw_input):
 
 def refine_chapter_text(text):
     """通用文本清洗：合并被画布折行打断的跨段句子，修复插图穿插导致的断句"""
+    if "<!-- pagebreak -->" in text:
+        return "\n\n<!-- pagebreak -->\n\n".join(
+            refine_chapter_text(part).strip() for part in text.split("<!-- pagebreak -->")
+        )
     if text.lstrip().split("\n", 1)[0].strip() == "# 版权信息":
         return text.strip()
     raw_lines = [l.strip() for l in text.split("\n") if l.strip()]
@@ -306,6 +310,9 @@ def md_to_html_simple(md_text, img_dir):
     paras = [p.strip() for p in md_text.split("\n\n") if p.strip()]
     out = []
     for line in paras:
+        if line == "<!-- pagebreak -->":
+            out.append('<div style="break-before: page;"></div>')
+            continue
         m_img = re.match(r"^!\[.*?\]\(images/([^)]+)\)$", line)
         if m_img:
             fn = m_img.group(1)

@@ -445,7 +445,7 @@ async def build_pdf(book_id, root, title, author, intro, texts, cover_available=
 <meta charset="utf-8"/>
 <title>{title}</title>
 <style>
-@page {{ size: A4; margin: 20mm calc((210mm - 490pt) / 2) 22mm; }}
+@page {{ size: A4; margin: calc(21mm - 25.2pt) calc((210mm - 490pt) / 2); }}
 * {{ box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }}
 body {{
     font-family: "Source Han Serif SC", "思源宋体", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei", sans-serif;

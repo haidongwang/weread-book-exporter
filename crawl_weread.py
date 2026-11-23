@@ -448,6 +448,65 @@ def mark_image_captions(content, lines):
         previous_image = None
 
 
+def mark_preserved_lines(lines, normal_gap=None):
+    """Keep runs of short, widely spaced lines separate from prose wrapping."""
+    measured = [line for line in lines if line.get("has_bounds") and line["cls"] == "js"]
+    if not measured:
+        return normal_gap
+    left = min(line["left"] for line in measured)
+    width = max(line["right"] for line in measured) - left
+    if width <= 0:
+        return normal_gap
+    gaps = []
+    for previous, line in zip(lines, lines[1:]):
+        gap = line["y"] - previous["y"]
+        if (previous.get("has_bounds") and previous["cls"] == line["cls"] == "js"
+                and previous["size"] == line["size"]
+                and previous["right"] - previous["left"] >= width * 0.7
+                and line["size"] < gap < line["size"] * 2.5):
+            gaps.append(gap)
+    if len(gaps) >= 2:
+        # Wrapping has the smaller recurring spacing; paragraph gaps are larger.
+        normal_gap = min(gaps)
+    if normal_gap is None:
+        return None
+
+    run = []
+    def finish():
+        if len(run) >= 3:
+            for line in run:
+                line["preserve_line"] = True
+
+    for index, line in enumerate(lines):
+        short = (line.get("has_bounds") and line["cls"] == "js"
+                 and line.get("alignment") not in ("right", "center")
+                 and not line.get("caption_for")
+                 and 0 < line["right"] - line["left"] <= width * 0.55
+                 and abs(line["left"] - left) <= line["size"] * 0.5
+                 and not re.match(r"^(?:[—－-]|\d{4}年)", line["text"])
+                 and not re.search(r"[：:]", line["text"]))
+        # A short last line of an ordinary wrapped paragraph is not a verse.
+        if short and index:
+            previous = lines[index - 1]
+            if 0 < line["y"] - previous["y"] <= normal_gap * 1.2:
+                short = False
+        if short and run:
+            gap = line["y"] - run[-1]["y"]
+            same_spacing = (len(run) < 2 or
+                            abs(gap - (run[-1]["y"] - run[-2]["y"])) <= line["size"] * 0.35)
+            if not (run[-1]["size"] == line["size"]
+                    and normal_gap * 1.3 <= gap <= normal_gap * 2.1 and same_spacing):
+                finish()
+                run = []
+        if short:
+            run.append(line)
+        else:
+            finish()
+            run = []
+    finish()
+    return normal_gap
+
+
 def copyright_layout(lines):
     """Require measured text bounds before interpreting alignment."""
     rows = [line for line in lines if line.get("has_bounds") and len(line["text"]) >= 4]
@@ -601,6 +660,10 @@ def render_md(title, blocks, ch_idx):
             name = f"img_{digest}.{ext}"
             out.append("![图](images/%s)\n" % name)
             imgs.append({"src": b["src"], "name": name})
+            continue
+        if b.get("preserve_line"):
+            flush()
+            out.extend(('<p class="preserve-line">%s</p>' % escape(b["text"]), ""))
             continue
         if b.get("caption_for"):
             flush()
@@ -1034,10 +1097,12 @@ async def main(book_id_or_url, force=False, metadata_only=False):
             else:
                 previous_spread = spread
 
+            normal_line_gap = None
             for side, lines in lines_by_side.items():
                 side_images = [im for im in images_at_positions.values() if im["side"] == side]
                 content = ordered_page_content(lines, side_images)
                 mark_image_captions(content, lines)
+                normal_line_gap = mark_preserved_lines(lines, normal_line_gap)
                 # Inspect all lines before consuming the spread: the copyright
                 # heading itself can occur later in this same batch.
                 first_body = copyright_body_line(lines, centered_copyright)
@@ -1153,7 +1218,8 @@ async def main(book_id_or_url, force=False, metadata_only=False):
                                 "layout": {key: ln[key] for key in
                                            ("left", "right", "viewport_y", "size", "align")
                                            if key in ln}, "side": side, "alignment": ln.get("alignment"),
-                                "caption_for": ln.get("caption_for")}
+                                "caption_for": ln.get("caption_for"),
+                                "preserve_line": ln.get("preserve_line", False)}
                     buf.append(line_blk)
                     page_blocks.append(line_blk)
 

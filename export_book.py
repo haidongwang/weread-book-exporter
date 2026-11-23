@@ -214,7 +214,7 @@ def build_markdown_files(book_id, title, texts):
     for t in refined:
         t = re.sub(r'<p class="yw">(.*?)</p>', r'> **\1**', t)
         t = re.sub(r'<p class="fang">(.*?)</p>', r'> *\1*', t)
-        t = re.sub(r'<p class="(?:right|caption)">(.*?)</p>', r'\1', t)
+        t = re.sub(r'<p class="(?:right|caption|preserve-line)">(.*?)</p>', r'\1', t)
         pure_chaps.append(t)
 
     pure_md_path = os.path.join(out_dir, f"{safe_title}_纯Markdown笔记版.md")
@@ -244,6 +244,7 @@ def build_epub(book_id, root, title, author, texts):
     body { font-family: "Songti SC", "SimSun", "Noto Serif CJK SC", serif; line-height: 1.85; font-size: 1em; margin: 0.6em 0.8em; }
     h1 { font-size: 1.35em; margin: 1.2em 0 0.9em; text-align: center; }
     p { text-indent: 2em; margin: 0.55em 0; }
+    p.preserve-line { text-indent: 0; margin: 0.5em 0; }
     p.caption { text-align: center; text-indent: 0; break-before: avoid; }
     p.right { text-align: right; text-indent: 0; }
     p.yw { font-family: "Kaiti SC", "KaiTi", "STKaiti", "楷体", serif; font-size: 1.05em; text-indent: 0; margin: 0.9em 0; padding: 0.5em 0.75em; border-left: 3px solid #9e2a2b; background-color: #f7f5ef; }
@@ -327,6 +328,9 @@ def md_to_html_simple(md_text, img_dir):
             else:
                 out.append(line)
             continue
+        if line.startswith('<p class="preserve-line">') and line.endswith("</p>"):
+            out.append(line)
+            continue
         if line.startswith('<p class="right">') and line.endswith("</p>"):
             out.append(line)
             continue
@@ -409,9 +413,14 @@ async def build_pdf(book_id, root, title, author, intro, texts, cover_available=
     for i, (titles, body_md) in enumerate(group_pdf_headings(texts, catalog), 1):
         ch_title = " ".join(titles)
         heading_html = "<br/>".join(escape(title) for title in titles)
+        decoration_html = ""
+        decoration = re.match(r"^\s*(!\[章首装饰图\]\(images/[^)]+\))\s*(?:\n|$)", body_md)
+        if decoration:
+            decoration_html = md_to_html_simple(decoration[1], img_dir)
+            body_md = body_md[decoration.end():]
         body_html = md_to_html_simple(body_md, img_dir)
         if catalog_keys and norm(ch_title) not in catalog_keys:
-            chap_htmls.append(f'<div class="subsection-title">{heading_html}</div>\n{body_html}')
+            chap_htmls.append(f'{decoration_html}<div class="subsection-title">{heading_html}</div>\n{body_html}')
             continue
         is_section = norm(ch_title) in catalog_keys and re.match(
             r"^[一二三四五六七八九十百]+(?:[、．.]\s*|\s+)", ch_title
@@ -427,6 +436,7 @@ async def build_pdf(book_id, root, title, author, intro, texts, cover_available=
         chap_htmls.append(
             f'<section class="{chapter_class}" id="chap-{i}">'
             f'<div class="chap-header">'
+            f'{decoration_html}'
             f'<h1>{heading_html}</h1>'
             f'<div class="chap-rule"></div>'
             f'</div>\n{body_html}</section>'
@@ -471,6 +481,7 @@ body {{
 .chapter {{ page-break-before: always; }}
 .subsection-title {{ font-size: 15pt; font-weight: bold; margin: 1em 0 .4em; break-after: avoid; break-inside: avoid; }}
 .img-wrap figcaption, p.caption {{ text-align: center; text-indent: 0; margin: 2mm 0 0; font-size: 11pt; }}
+p.preserve-line {{ text-indent: 0; margin: 0.5em 0; }}
 p.right {{ text-align: right; text-indent: 0; }}
 .copyright-page p {{ text-align: center; text-indent: 0; margin: 1.3em 0; }}
 .chap-header {{ break-inside: avoid; text-align: center; margin: 2mm 0 8mm 0; page-break-after: avoid; }}

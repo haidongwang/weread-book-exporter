@@ -267,6 +267,53 @@ IMGS_JS = """
 SENT_END_RE = re.compile(r"[。！？；：…][”」）】》]*$")
 
 
+async def filter_transparent_images(page, images, cache):
+    """Exclude only successfully decoded, completely transparent images."""
+    kept = []
+    for image in images:
+        src = image["src"]
+        if src not in cache:
+            response = None
+            try:
+                response = await page.context.request.get(
+                    src, headers={"Referer": "https://weread.qq.com/"}, timeout=20000
+                )
+                if not response.ok:
+                    kept.append(image)
+                    continue
+                import base64
+                encoded = base64.b64encode(await response.body()).decode("ascii")
+                transparent = await page.evaluate("""async encoded => {
+                    const bytes = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
+                    const bitmap = await createImageBitmap(new Blob([bytes]));
+                    try {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = bitmap.width;
+                        canvas.height = bitmap.height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(bitmap, 0, 0);
+                        const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+                        for (let i = 3; i < pixels.length; i += 4) {
+                            if (pixels[i] !== 0) return false;
+                        }
+                        return true;
+                    } finally { bitmap.close(); }
+                }""", encoded)
+                cache[src] = transparent
+                if transparent:
+                    print("🖼️ 已跳过全透明占位图片", flush=True)
+            except Exception:
+                # Network/decoding failures must never discard real illustrations.
+                kept.append(image)
+                continue
+            finally:
+                if response is not None:
+                    await response.dispose()
+        if not cache[src]:
+            kept.append(image)
+    return kept
+
+
 def norm(s):
     return re.sub(r"[\s\u200b\ufeff\u3000\-_:：,，、.·]+", "", s or "")
 
@@ -1056,6 +1103,7 @@ async def main(book_id_or_url, force=False, metadata_only=False):
         crawl_completed = False
         seen_page_sigs = set()
         previous_spread = None
+        transparent_image_cache = {}
         centered_copyright = False
 
         raw_pages = sorted([f for f in os.listdir(raw_dir) if f.startswith("page_") and f.endswith(".json")])
@@ -1081,6 +1129,7 @@ async def main(book_id_or_url, force=False, metadata_only=False):
             ok = await wait_stable_chars(page, timeout=2.2 if step > start_step else 5.0)
             chars = await page.evaluate("() => window.__wr_drain()") if ok else []
             imgs = await page.evaluate(IMGS_JS)
+            imgs = await filter_transparent_images(page, imgs, transparent_image_cache)
 
             pages = split_pages(chars)
             got_any = False

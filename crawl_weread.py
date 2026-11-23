@@ -665,7 +665,7 @@ async def launch_browser_context(p, user_data_dir, headless=False):
         try:
             kwargs = {
                 "headless": headless,
-                "viewport": {"width": 1200, "height": 900},
+                "viewport": {"width": 1600, "height": 900},
                 "args": ["--disable-blink-features=AutomationControlled"]
             }
             if c["channel"]:

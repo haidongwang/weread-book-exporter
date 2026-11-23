@@ -700,6 +700,83 @@ def repair_copyright_linebreaks(markdown):
     return "\n\n".join(repaired) + "\n"
 
 
+NUMBERED_CAPTION_RE = re.compile(r"^[图表]\s*\d+(?:[-－—]\d+)*(?:[A-Za-z])?\s+\S")
+CAPTION_SOURCE_RE = re.compile(r"^(?:图片来源|数据来源|图像来源|资料来源|来源|出处|出自)\s*[:：]")
+
+
+def caption_line_continues(previous, following):
+    """Require measured, closely spaced centered lines for wrapped captions."""
+    if following.get("type") != "line" or following.get("cls") == "title":
+        return False
+    if re.match(r"^(?:[图表]\s*\d|注[:：])", following["text"]) or CAPTION_SOURCE_RE.match(following["text"]):
+        return False
+    a, b = previous.get("layout", {}), following.get("layout", {})
+    keys = ("left", "right", "viewport_y", "size")
+    if not all(key in a and key in b for key in keys):
+        return False
+    size = a["size"]
+    return (previous.get("side") == following.get("side")
+            and abs(size - b["size"]) < 1
+            and 0 < b["viewport_y"] - a["viewport_y"] <= size * 2.2
+            and abs((a["left"] + a["right"] - b["left"] - b["right"]) / 2) <= size * 0.6)
+
+
+def prepare_caption_blocks(blocks):
+    """Recover caption boundaries before paragraph merging; leave raw blocks intact."""
+    out = []
+    index = 0
+    while index < len(blocks):
+        block = blocks[index]
+        if (block.get("type") != "line" or block.get("cls") == "title"
+                or not NUMBERED_CAPTION_RE.match(block["text"])):
+            out.append(dict(block))
+            index += 1
+            continue
+        end = index
+        text = block["text"]
+        while end + 1 < len(blocks) and caption_line_continues(blocks[end], blocks[end + 1]):
+            text += wrapped_line_separator(text, blocks[end + 1]["text"]) + blocks[end + 1]["text"]
+            end += 1
+        previous = blocks[index - 1] if index else {}
+        following = blocks[end + 1] if end + 1 < len(blocks) else {}
+        before = text.startswith("表") and following.get("type") == "img"
+        after = text.startswith("图") and previous.get("type") == "img"
+        if not before and not after:
+            out.append(dict(block))
+            index += 1
+            continue
+        caption = dict(block)
+        caption.update(text=text, caption_for=(following if before else previous)["src"],
+                       caption_position="before" if before else "after", alignment="center",
+                       preserve_line=False)
+        out.append(caption)
+        index = end + 1
+    # Sources belong to the preceding caption/image, never to surrounding prose.
+    result = []
+    index = 0
+    while index < len(out):
+        block = out[index]
+        if (block.get("type") == "line" and CAPTION_SOURCE_RE.match(block["text"])
+                and result and (result[-1].get("caption_for") or result[-1].get("type") == "img")):
+            source = block["text"]
+            end = index
+            while end + 1 < len(out) and caption_line_continues(out[end], out[end + 1]):
+                source += wrapped_line_separator(source, out[end + 1]["text"]) + out[end + 1]["text"]
+                end += 1
+            if result[-1].get("caption_for") and result[-1].get("caption_position") != "before":
+                existing = result[-1].get("caption_source", "")
+                result[-1]["caption_source"] = existing + (" " if existing else "") + source
+            else:
+                image_src = result[-1].get("src", result[-1].get("caption_for"))
+                result.append(dict(block, text=source, caption_for=image_src,
+                                   caption_position="after", preserve_line=False))
+            index = end + 1
+            continue
+        result.append(block)
+        index += 1
+    return result
+
+
 def render_md(title, blocks, ch_idx):
     out = ["# %s\n" % title]
     buf, buf_cls = [], None
@@ -737,7 +814,7 @@ def render_md(title, blocks, ch_idx):
         buf, buf_cls = [], None
 
     imgs = []
-    for b in blocks:
+    for b in prepare_caption_blocks(blocks):
         if b["type"] == "img":
             flush()
             ext = "jpg"
@@ -756,7 +833,10 @@ def render_md(title, blocks, ch_idx):
         if b.get("caption_for"):
             flush()
             caption_class = "caption-top" if b.get("caption_position") == "before" else "caption"
-            out.extend(('<p class="%s">%s</p>' % (caption_class, escape(b["text"])), ""))
+            caption_text = escape(b["text"])
+            if b.get("caption_source"):
+                caption_text += "<br/>" + escape(b["caption_source"])
+            out.extend(('<p class="%s">%s</p>' % (caption_class, caption_text), ""))
             continue
         if b.get("alignment") == "right":
             flush()

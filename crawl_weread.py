@@ -428,6 +428,20 @@ def mark_image_captions(content, lines):
     left = min(line["left"] for line in measured)
     right = max(line["right"] for line in measured)
     width = right - left
+    # A numbered table title immediately above an image belongs to that image.
+    for index, (is_image, item) in enumerate(content[:-1]):
+        next_is_image, image = content[index + 1]
+        if is_image or not next_is_image or not item.get("has_bounds"):
+            continue
+        if not re.match(r"^(?:表\s*\d+(?:[-－—]\d+)?(?:\s|　)|续表(?:\s|$))", item["text"]):
+            continue
+        center = (item["left"] + item["right"]) / 2
+        gap = image.get("top", float("inf")) - item["viewport_y"]
+        if (width > 0 and abs(center - (left + right) / 2) <= item["size"] * 0.6
+                and 0 <= gap <= item["size"] * 4):
+            item["caption_for"] = image["src"]
+            item["caption_position"] = "before"
+            item["alignment"] = "center"
     previous_image = None
     for is_image, item in content:
         if is_image:
@@ -667,7 +681,8 @@ def render_md(title, blocks, ch_idx):
             continue
         if b.get("caption_for"):
             flush()
-            out.extend(('<p class="caption">%s</p>' % escape(b["text"]), ""))
+            caption_class = "caption-top" if b.get("caption_position") == "before" else "caption"
+            out.extend(('<p class="%s">%s</p>' % (caption_class, escape(b["text"])), ""))
             continue
         if b.get("alignment") == "right":
             flush()
@@ -1219,6 +1234,7 @@ async def main(book_id_or_url, force=False, metadata_only=False):
                                            ("left", "right", "viewport_y", "size", "align")
                                            if key in ln}, "side": side, "alignment": ln.get("alignment"),
                                 "caption_for": ln.get("caption_for"),
+                                "caption_position": ln.get("caption_position"),
                                 "preserve_line": ln.get("preserve_line", False)}
                     buf.append(line_blk)
                     page_blocks.append(line_blk)

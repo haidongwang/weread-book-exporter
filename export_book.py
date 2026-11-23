@@ -214,7 +214,7 @@ def build_markdown_files(book_id, title, texts):
     for t in refined:
         t = re.sub(r'<p class="yw">(.*?)</p>', r'> **\1**', t)
         t = re.sub(r'<p class="fang">(.*?)</p>', r'> *\1*', t)
-        t = re.sub(r'<p class="(?:right|caption|preserve-line)">(.*?)</p>', r'\1', t)
+        t = re.sub(r'<p class="(?:right|caption|caption-top|preserve-line)">(.*?)</p>', r'\1', t)
         pure_chaps.append(t)
 
     pure_md_path = os.path.join(out_dir, f"{safe_title}_纯Markdown笔记版.md")
@@ -246,6 +246,7 @@ def build_epub(book_id, root, title, author, texts):
     p { text-indent: 2em; margin: 0.55em 0; }
     p.preserve-line { text-indent: 0; margin: 0.5em 0; }
     p.caption { text-align: center; text-indent: 0; break-before: avoid; }
+    p.caption-top { text-align: center; text-indent: 0; break-after: avoid; }
     p.right { text-align: right; text-indent: 0; }
     p.yw { font-family: "Kaiti SC", "KaiTi", "STKaiti", "楷体", serif; font-size: 1.05em; text-indent: 0; margin: 0.9em 0; padding: 0.5em 0.75em; border-left: 3px solid #9e2a2b; background-color: #f7f5ef; }
     p.fang { font-family: "Kaiti SC", "KaiTi", "STKaiti", "楷体", serif; font-weight: bold; text-indent: 0; margin: 0.45em 0 0.45em 1.2em; }
@@ -310,7 +311,7 @@ def format_yw_html(inner):
 def md_to_html_simple(md_text, img_dir):
     paras = [p.strip() for p in md_text.split("\n\n") if p.strip()]
     out = []
-    for line in paras:
+    for index, line in enumerate(paras):
         if line == "<!-- pagebreak -->":
             out.append('<div style="break-before: page;"></div>')
             continue
@@ -319,7 +320,17 @@ def md_to_html_simple(md_text, img_dir):
             fn = m_img.group(1)
             uri = img_to_data_uri(os.path.join(img_dir, fn))
             if uri:
-                out.append(f'<figure class="img-wrap"><img src="{uri}" alt="{fn}"/></figure>')
+                top_caption = ""
+                if index > 0 and paras[index - 1].startswith('<p class="caption-top">'):
+                    previous = paras[index - 1]
+                    if out and out[-1] == previous:
+                        out.pop()
+                        inner = previous[len('<p class="caption-top">'):-len('</p>')]
+                        top_caption = f'<figcaption class="caption-top">{inner}</figcaption>'
+                out.append(f'<figure class="img-wrap">{top_caption}<img src="{uri}" alt="{fn}"/></figure>')
+            continue
+        if line.startswith('<p class="caption-top">') and line.endswith("</p>"):
+            out.append(line)
             continue
         if line.startswith('<p class="caption">') and line.endswith("</p>"):
             caption = line[len('<p class="caption">'):-len("</p>")]
@@ -480,7 +491,7 @@ body {{
 .toc-num {{ font-size: 9.5pt; background: #f4ece1; color: #9e2a2b; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-right: 3.2mm; min-width: 7.5mm; text-align: center; }}
 .chapter {{ page-break-before: always; }}
 .subsection-title {{ font-size: 15pt; font-weight: bold; margin: 1em 0 .4em; break-after: avoid; break-inside: avoid; }}
-.img-wrap figcaption, p.caption {{ text-align: center; text-indent: 0; margin: 2mm 0 0; font-size: 11pt; }}
+.img-wrap figcaption, p.caption, p.caption-top {{ text-align: center; text-indent: 0; margin: 2mm 0 0; font-size: 12pt; }}
 p.preserve-line {{ text-indent: 0; margin: 0.5em 0; }}
 p.right {{ text-align: right; text-indent: 0; }}
 .copyright-page p {{ text-align: center; text-indent: 0; margin: 1.3em 0; }}
@@ -509,6 +520,8 @@ p.yw {{
     border-left: 3.5px solid #b46535; border-radius: 0 5px 5px 0; color: #2c221b;
     font-weight: bold; page-break-inside: avoid;
 }}
+.img-wrap figcaption.caption-top {{ margin: 0 0 2mm; }}
+p.caption-top {{ break-after: avoid; }}
 .img-wrap {{ text-align: center; margin: 7mm 0; page-break-inside: avoid; }}
 .img-wrap img {{ max-width: 86%; max-height: 175mm; height: auto; border-radius: 4px; padding: 2mm; background: #fff; }}
 </style>

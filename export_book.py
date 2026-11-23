@@ -380,7 +380,7 @@ def group_pdf_headings(texts, catalog):
     prefixes = {key[:end] for key in catalog_keys for end in range(1, len(key))}
     chapters = []
     for i, text in enumerate(texts, 1):
-        first, _, body = refine_chapter_text(text).partition("\n")
+        first, _, body = refine_chapter_text(text.replace("<!-- keep-with-next -->", "")).partition("\n")
         title = re.sub(r"^#\s*", "", first).strip() or f"第{i}节"
         chapters.append((title, body))
 
@@ -421,7 +421,10 @@ async def build_pdf(book_id, root, title, author, intro, texts, cover_available=
 
     catalog_keys = {norm(label) for label in catalog if norm(label)}
     toc_items, chap_htmls = [], []
+    previous_heading_only = False
     for i, (titles, body_md) in enumerate(group_pdf_headings(texts, catalog), 1):
+        continue_page = previous_heading_only
+        previous_heading_only = not body_md.strip()
         ch_title = " ".join(titles)
         heading_html = "<br/>".join(escape(title) for title in titles)
         decoration_html = ""
@@ -444,6 +447,10 @@ async def build_pdf(book_id, root, title, author, intro, texts, cover_available=
             f'</a></li>'
         )
         chapter_class = "chapter copyright-page" if ch_title == "版权信息" else "chapter"
+        if continue_page:
+            chapter_class += " continue-page"
+        if previous_heading_only:
+            chapter_class += " heading-only"
         chap_htmls.append(
             f'<section class="{chapter_class}" id="chap-{i}">'
             f'<div class="chap-header">'
@@ -490,6 +497,8 @@ body {{
 .toc-list .toc-section a {{ padding-inline-start: 2em; }}
 .toc-num {{ font-size: 9.5pt; background: #f4ece1; color: #9e2a2b; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-right: 3.2mm; min-width: 7.5mm; text-align: center; }}
 .chapter {{ page-break-before: always; }}
+.chapter.continue-page {{ page-break-before: auto; break-before: auto; }}
+.chapter.heading-only {{ break-after: avoid-page; page-break-after: avoid; }}
 .subsection-title {{ font-size: 15pt; font-weight: bold; margin: 1em 0 .4em; break-after: avoid; break-inside: avoid; }}
 .img-wrap figcaption, p.caption, p.caption-top {{ text-align: center; text-indent: 0; margin: 2mm 0 0; font-size: 12pt; }}
 p.preserve-line {{ text-indent: 0; margin: 0.5em 0; }}

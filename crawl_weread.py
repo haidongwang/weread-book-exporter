@@ -673,6 +673,33 @@ def wrapped_line_separator(left, right):
     return ""
 
 
+def repair_copyright_linebreaks(markdown):
+    """Join wrapped authorization notices without merging copyright fields."""
+    paragraphs = markdown.rstrip("\n").split("\n\n")
+    repaired = []
+    index = 0
+    while index < len(paragraphs):
+        current = paragraphs[index]
+        if current.startswith("本书由"):
+            joined = current
+            end = index
+            while not re.fullmatch(r"本书由.+授权微信读书进行制作与发行[。.]?", joined):
+                if end + 1 >= len(paragraphs):
+                    break
+                following = paragraphs[end + 1]
+                # Preserve metadata fields, HTML formatting and structural boundaries.
+                if not following or re.search(r"[\n<>：:]", following) or following.startswith(("#", "![", "版权所有")):
+                    break
+                joined += following
+                end += 1
+            if re.fullmatch(r"本书由.+授权微信读书进行制作与发行[。.]?", joined):
+                current = joined
+                index = end
+        repaired.append(current)
+        index += 1
+    return "\n\n".join(repaired) + "\n"
+
+
 def render_md(title, blocks, ch_idx):
     out = ["# %s\n" % title]
     buf, buf_cls = [], None
@@ -740,7 +767,10 @@ def render_md(title, blocks, ch_idx):
             buf_cls = b["cls"]
         buf.append(b["text"])
     flush()
-    return "\n".join(out).rstrip() + "\n", imgs
+    markdown = "\n".join(out).rstrip() + "\n"
+    if title.strip() == "版权信息":
+        markdown = repair_copyright_linebreaks(markdown)
+    return markdown, imgs
 
 
 async def wait_stable_chars(page, timeout=6.0):

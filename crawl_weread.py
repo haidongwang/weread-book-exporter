@@ -21,6 +21,7 @@ import re
 import sys
 import time
 import urllib.request
+from urllib.parse import urlsplit
 
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright
 
@@ -1033,6 +1034,51 @@ def advance_catalog(catalog, index, text, style):
     return index
 
 
+class ReaderIdentityError(RuntimeError):
+    pass
+
+
+def reader_book_key(reader_id):
+    """Ignore the k+23-hex location suffix in full WeRead reader links."""
+    return re.sub(r"k[0-9a-fA-F]{23}$", "", reader_id)
+
+
+def reader_identity_problem(identity, book_id, expected=None):
+    """Check the reader URL and compare internal IDs only with the initial snapshot.
+
+    WeRead's internal numeric bookId is not the encoded ID in the reader URL.
+    """
+    url = urlsplit(identity.get("url", ""))
+    match = re.fullmatch(r"/web/reader/([^/]+)/?", url.path)
+    if (url.hostname != "weread.qq.com" or not match
+            or reader_book_key(match[1]) != reader_book_key(book_id)):
+        return f"阅读页已离开目标书籍，当前地址：{identity.get('url', '')}"
+    for key, label in (("book_id", "内部书籍 ID"), ("title", "书名")):
+        previous = (expected or {}).get(key)
+        if previous and identity.get(key) != previous:
+            return f"{label}发生变化或暂时无法确认：{previous} → {identity.get(key) or '未知'}"
+    return ""
+
+
+async def ensure_reader_identity(page, book_id, expected=None):
+    try:
+        identity = await page.evaluate("""() => {
+            const info = window.__INITIAL_STATE__?.reader?.bookInfo || {};
+            return {url: location.href, book_id: String(info.bookId || ''), title: info.title || ''};
+        }""")
+    except Exception as exc:
+        raise ReaderIdentityError("无法核对阅读页书籍身份，停止采集当前批次") from exc
+    problem = reader_identity_problem(identity, book_id, expected)
+    if problem:
+        raise ReaderIdentityError(problem)
+    return identity
+
+
+async def turn_reader_page(page):
+    # Focus the body via the keyboard API; never click links embedded in the text.
+    await page.locator("body").press("ArrowRight")
+
+
 async def main(book_id_or_url, force=False, metadata_only=False):
     book_id = extract_book_id(book_id_or_url)
     if not book_id:
@@ -1096,6 +1142,13 @@ async def main(book_id_or_url, force=False, metadata_only=False):
                 print("❌ 扫码登录超时（300秒），导出终止。请重新运行并在弹出的窗口中扫码！", flush=True)
                 await ctx.close()
                 return False
+
+        try:
+            expected_reader = await ensure_reader_identity(page, book_id)
+        except ReaderIdentityError as exc:
+            print(f"⚠️ {exc}", flush=True)
+            await ctx.close()
+            return False
 
         # 抓取完整的书籍元数据与原版高清封面
         book_meta = await page.evaluate("""() => {
@@ -1258,13 +1311,19 @@ async def main(book_id_or_url, force=False, metadata_only=False):
         total_words_accum = state.get("total_words", 0) if resume_cat_idx > 0 else 0
         t_start = time.time()
         long_pause_at = next_long_pause_at(start_step)
+        stop_reason = ""
 
         print(f"\n🚀 开始遍历抓取页面 (从第 {start_step} 页开始)...", flush=True)
 
         for step in range(start_step, start_step + 5000):
+            try:
+                await ensure_reader_identity(page, book_id, expected_reader)
+            except ReaderIdentityError as exc:
+                stop_reason = str(exc)
+                print(f"⚠️ {stop_reason}；已停止抓取，保留此前进度。", flush=True)
+                break
             if step > start_step:
-                await page.mouse.click(600, 450)
-                await page.keyboard.press("ArrowRight")
+                await turn_reader_page(page)
                 delay = random.uniform(*PAGE_DELAY_RANGE)
                 await asyncio.sleep(delay)
                 if step >= long_pause_at:
@@ -1274,9 +1333,20 @@ async def main(book_id_or_url, force=False, metadata_only=False):
                     long_pause_at = next_long_pause_at(step)
 
             ok = await wait_stable_chars(page, timeout=2.2 if step > start_step else 5.0)
-            chars = await page.evaluate("() => window.__wr_drain()") if ok else []
-            imgs = await page.evaluate(IMGS_JS)
-            imgs = await filter_transparent_images(page, imgs, transparent_image_cache)
+            try:
+                await ensure_reader_identity(page, book_id, expected_reader)
+                chars = await page.evaluate("() => window.__wr_drain()") if ok else []
+                imgs = await page.evaluate(IMGS_JS)
+                imgs = await filter_transparent_images(page, imgs, transparent_image_cache)
+                # Discard the whole batch if navigation happened during capture.
+                await ensure_reader_identity(page, book_id, expected_reader)
+            except Exception as exc:
+                # A navigation can destroy the JS context between two identity
+                # checks. Still flush the preceding safe chapter on this exit.
+                stop_reason = (str(exc) if isinstance(exc, ReaderIdentityError)
+                               else f"当前批次读取失败：{exc}")
+                print(f"⚠️ {stop_reason}；当前批次未写入，保留此前进度。", flush=True)
+                break
 
             pages = split_pages(chars)
             got_any = False
@@ -1446,6 +1516,8 @@ async def main(book_id_or_url, force=False, metadata_only=False):
                 with open(page_file, "w", encoding="utf-8") as pf:
                     json.dump({
                         "step": step,
+                        "book_id": book_id,
+                        "reader_url": page.url,
                         "chapter": cur_title,
                         "words": step_words,
                         "blocks": page_blocks,
@@ -1484,6 +1556,7 @@ async def main(book_id_or_url, force=False, metadata_only=False):
             "last_title": cur_title,
             "seen_titles": list(seen_titles),
             "total_words": total_words_accum,
+            "stop_reason": stop_reason,
         })
 
         print(f"\n" + "="*50)

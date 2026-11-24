@@ -434,6 +434,32 @@ def mark_right_aligned_lines(lines):
         if short and anchored and (separated or line.get("align") in ("right", "end")):
             line["alignment"] = "right"
 
+    # A title + name can exceed the short-line limit. Require an independently
+    # recognized date immediately below it instead of widening the prose rule.
+    for index, line in enumerate(lines[:-1]):
+        date = lines[index + 1]
+        if (line.get("cls") != "js" or not line.get("has_bounds")
+                or line.get("caption_for") or line.get("alignment")
+                or date.get("alignment") != "right" or not date.get("has_bounds")
+                or not re.match(r"^(?:\d{4}|[〇零一二三四五六七八九]{4})年", date["text"])):
+            continue
+        text = line["text"]
+        if (len(text) > 32 or re.search(r"[，,。！？!?；;：:]", text)
+                or not re.search(r"(?:导师|教授|研究员|博士|院士|校长|主任|作家|作者|编者|记者|编辑)\s*[\u4e00-\u9fff·]{2,8}$", text)):
+            continue
+        gap = date["viewport_y"] - line["viewport_y"]
+        separated_above = (index == 0 or
+                           line["viewport_y"] - lines[index - 1]["viewport_y"] >= line["size"] * 2.5)
+        if (line.get("side") == date.get("side")
+                and abs(line["size"] - date["size"]) < 1
+                and line["size"] * 2.5 <= gap <= line["size"] * 4
+                and separated_above
+                and line["right"] - line["left"] <= width * 0.6
+                and line["left"] >= left_edge + width * 0.35
+                and abs(line["right"] - right_edge) <= line["size"] * 0.6
+                and abs(line["right"] - date["right"]) <= line["size"] * 0.6):
+            line["alignment"] = "right"
+
 
 def page_lines(chars):
     rows = {}

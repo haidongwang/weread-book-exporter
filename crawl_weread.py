@@ -468,7 +468,28 @@ def page_lines(chars):
     return out
 
 
-def mark_image_captions(content, lines):
+def caption_body_bounds(lines):
+    """Infer column bounds only from multiple near-full prose lines."""
+    prose = [line for line in lines
+             if line.get("has_bounds") and line.get("cls") == "js"
+             and not line.get("caption_for") and not line.get("alignment")
+             and len(line["text"]) >= 20
+             and not re.match(r"^(?:[图表]\s*\d|\d{4}年)", line["text"])
+             and line["left"] <= line["size"] * 2
+             and line["right"] - line["left"] >= line["size"] * 20]
+    if len(prose) < 2:
+        return None
+    widest = max(prose, key=lambda line: line["right"] - line["left"])
+    peers = [line for line in prose
+             if abs(line["size"] - widest["size"]) < 1
+             and abs(line["left"] - widest["left"]) <= widest["size"]
+             and abs(line["right"] - widest["right"]) <= widest["size"]]
+    if len(peers) < 2:
+        return None
+    return min(line["left"] for line in peers), max(line["right"] for line in peers)
+
+
+def mark_image_captions(content, lines, spread_body_bounds=None):
     measured = [line for line in lines if line.get("has_bounds") and line["cls"] != "title"]
     if not measured:
         return
@@ -501,6 +522,22 @@ def mark_image_captions(content, lines):
                     and abs(center - (left + right) / 2) <= item["size"] * 0.6
                     and item["left"] > left + item["size"]
                     and item["right"] < right - item["size"])
+        # An image-only column must not use its own caption as the body width.
+        # Borrow measured prose bounds from this spread, but only for a short,
+        # caption-like date/number label, never an arbitrary following paragraph.
+        if not centered and spread_body_bounds and caption_body_bounds(lines) is None:
+            body_left, body_right = spread_body_bounds
+            text = item["text"]
+            caption_label = re.match(
+                r"^(?:图\s*\d+(?:[-－—]\d+)*\s+|\d{4}年(?:[，,、\s春夏秋冬]|\d{1,2}月))", text
+            )
+            centered = (bool(caption_label) and item.get("has_bounds")
+                        and item.get("cls") == "js"
+                        and item.get("alignment") != "right"
+                        and not re.search(r"[。！？!?；;]", text)
+                        and abs(center - (body_left + body_right) / 2) <= item["size"] * 0.6
+                        and item["left"] > body_left + item["size"]
+                        and item["right"] < body_right - item["size"])
         gap = item["viewport_y"] - previous_image.get("bottom", float("inf"))
         if (centered and item["cls"] != "title" and len(item["text"]) <= 80
                 and 0 <= gap <= item["size"] * 3):
@@ -1271,11 +1308,14 @@ async def main(book_id_or_url, force=False, metadata_only=False):
             else:
                 previous_spread = spread
 
+            spread_body_bounds = caption_body_bounds([
+                line for lines in lines_by_side.values() for line in lines
+            ])
             normal_line_gap = None
             for side, lines in lines_by_side.items():
                 side_images = [im for im in images_at_positions.values() if im["side"] == side]
                 content = ordered_page_content(lines, side_images)
-                mark_image_captions(content, lines)
+                mark_image_captions(content, lines, spread_body_bounds)
                 normal_line_gap = mark_preserved_lines(lines, normal_line_gap)
                 # Inspect all lines before consuming the spread: the copyright
                 # heading itself can occur later in this same batch.

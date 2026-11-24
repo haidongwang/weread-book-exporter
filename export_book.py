@@ -284,7 +284,7 @@ def build_epub(book_id, root, title, author, texts):
     book.spine = ["nav"] + items
 
     safe = re.sub(r'[<>:"/\\|?*]', "_", title) or book_id
-    out_epub = os.path.join(BASE, "output", f"{safe}（双字体精排）.epub")
+    out_epub = os.path.join(BASE, "output", f"{safe}.epub")
     epub.write_epub(out_epub, book)
     print(f"📘 EPUB 电子书生成完成: {out_epub}", flush=True)
     return out_epub
@@ -552,7 +552,7 @@ p.caption-top {{ break-after: avoid; }}
 
     safe = re.sub(r'[<>:"/\\|?*]', "_", title) or book_id
     html_path = os.path.join(BASE, "output", f"_temp_{book_id}.html")
-    pdf_path = os.path.join(BASE, "output", f"{safe}（双字体精排）.pdf")
+    pdf_path = os.path.join(BASE, "output", f"{safe}.pdf")
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
 

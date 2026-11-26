@@ -632,6 +632,45 @@ def mark_preserved_lines(lines, normal_gap=None):
     return normal_gap
 
 
+def mark_isolated_short_lines(lines, normal_gap, starts_after_heading=False):
+    """Preserve isolated short lines only immediately after a heading."""
+    if normal_gap is None:
+        return
+    measured = [line for line in lines if line.get("has_bounds") and line.get("cls") == "js"]
+    if len(measured) < 3:
+        return
+    left = min(line["left"] for line in measured)
+    width = max(line["right"] for line in measured) - left
+    for index, line in enumerate(lines[:-1]):
+        following = lines[index + 1]
+        after_heading = (starts_after_heading if index == 0
+                         else lines[index - 1].get("cls") == "title")
+        if (not after_heading or not line.get("has_bounds") or line.get("cls") != "js"
+                or line.get("alignment") or line.get("caption_for")
+                or line.get("preserve_line") or SENT_END_RE.search(line["text"])
+                or not following.get("has_bounds") or following.get("cls") != "js"
+                or following.get("alignment") or following.get("caption_for")):
+            continue
+        size = line["size"]
+        y = line.get("y", line["viewport_y"])
+        next_y = following.get("y", following["viewport_y"])
+        line_width = line["right"] - line["left"]
+        next_width = following["right"] - following["left"]
+        separated_above = (index == 0 or
+                           y - lines[index - 1].get("y", lines[index - 1]["viewport_y"]) >= normal_gap * 1.35)
+        if (width > 0 and size < normal_gap <= size * 2.5
+                and 0 < line_width <= width * 0.4
+                and line_width <= next_width * 0.5
+                and next_width >= width * 0.65
+                and abs(line["left"] - left) <= size * 0.5
+                and abs(following["left"] - left) <= size * 2.5
+                and abs(size - following["size"]) < 1
+                and line.get("side") == following.get("side")
+                and normal_gap * 1.35 <= next_y - y <= normal_gap * 2.2
+                and separated_above):
+            line["preserve_line"] = True
+
+
 def copyright_layout(lines):
     """Require measured text bounds before interpreting alignment."""
     rows = [line for line in lines if line.get("has_bounds") and len(line["text"]) >= 4]
@@ -1477,6 +1516,9 @@ async def main(book_id_or_url, force=False, metadata_only=False):
                 content = ordered_page_content(lines, side_images)
                 mark_image_captions(content, lines, spread_body_bounds)
                 normal_line_gap = mark_preserved_lines(lines, normal_line_gap)
+                mark_isolated_short_lines(
+                    lines, normal_line_gap, starts_after_heading=captured_heading and not buf
+                )
                 # Inspect all lines before consuming the spread: the copyright
                 # heading itself can occur later in this same batch.
                 first_body = copyright_body_line(lines, centered_copyright)

@@ -940,6 +940,35 @@ def prepare_caption_blocks(blocks):
     return result
 
 
+def review_preserved_dialogue(blocks):
+    """Conservatively reclassify verse-like dialogue while keeping paragraphs."""
+    result = [dict(block) for block in blocks]
+    quoted_sentence = re.compile(r'^(?:“[^”]+[。！？!?]”|「[^」]+[。！？!?]」|"[^"\n]+[.!?。！？]")$')
+    poetry_cue = re.compile(r"一首|这首|那首|首诗|诗句|诗歌|诗曰|词曰|唱道|唱起|吟道|吟诵|朗诵|歌曰|歌词|唱词")
+    speech_cue = re.compile(r"[\u4e00-\u9fff]{1,10}(?:说道|问道|答道|喊道|叫道|暗笑|嘀咕|嘟囔|说|问|回答)[：:，,。]|[”」][，,。]?[\u4e00-\u9fff]{1,8}(?:说|问|答)")
+    index = 0
+    while index < len(result):
+        end = index
+        while (end < len(result) and result[end].get("type") == "line"
+               and result[end].get("preserve_line")
+               and not result[end].get("caption_for")
+               and not result[end].get("alignment")
+               and quoted_sentence.fullmatch(result[end]["text"].strip())):
+            end += 1
+        if end - index >= 3:
+            nearby = result[max(0, index - 3):index] + result[end:end + 3]
+            context = "".join(block.get("text", "") for block in nearby if block.get("type") == "line")
+            utterances = [block["text"] for block in result[index:end]]
+            interactive = (any(re.search(r"[你您咱俺]|我们", text) for text in utterances)
+                           and any(re.search(r"[？?]|[噢哦嗯哎喂噫]|是的|不是|怎么|什么", text) for text in utterances))
+            if interactive and speech_cue.search(context) and not poetry_cue.search(context):
+                for block in result[index:end]:
+                    block["preserve_line"] = False
+                    block["dialogue"] = True
+        index = max(index + 1, end)
+    return result
+
+
 def render_md(title, blocks, ch_idx):
     out = ["# %s\n" % title]
     buf, buf_cls = [], None
@@ -977,7 +1006,7 @@ def render_md(title, blocks, ch_idx):
         buf, buf_cls = [], None
 
     imgs = []
-    for b in prepare_caption_blocks(blocks):
+    for b in review_preserved_dialogue(prepare_caption_blocks(blocks)):
         if b["type"] == "img":
             flush()
             ext = "jpg"
@@ -992,6 +1021,10 @@ def render_md(title, blocks, ch_idx):
         if b.get("caption_standalone"):
             flush()
             out.extend(('<p class="caption-standalone">%s</p>' % escape(b["text"]), ""))
+            continue
+        if b.get("dialogue"):
+            flush()
+            out.extend(('<p class="dialogue">%s</p>' % escape(b["text"]), ""))
             continue
         if b.get("preserve_line"):
             flush()
@@ -1644,6 +1677,9 @@ async def main(book_id_or_url, force=False, metadata_only=False):
 
             # 🌟 逐页完整结构化落盘（真·断点保护）
             if got_any:
+                for original, reviewed in zip(page_blocks, review_preserved_dialogue(page_blocks)):
+                    if reviewed.get("dialogue"):
+                        original.update(preserve_line=False, dialogue=True)
                 page_file = os.path.join(raw_dir, f"page_{step:04d}.json")
                 with open(page_file, "w", encoding="utf-8") as pf:
                     json.dump({

@@ -214,7 +214,7 @@ def build_markdown_files(book_id, title, texts):
     for t in refined:
         t = re.sub(r'<p class="yw">(.*?)</p>', r'> **\1**', t)
         t = re.sub(r'<p class="fang">(.*?)</p>', r'> *\1*', t)
-        t = re.sub(r'<p class="(?:right|caption|caption-top|preserve-line)">(.*?)</p>', r'\1', t)
+        t = re.sub(r'<p class="(?:right|caption|caption-top|caption-standalone|preserve-line)">(.*?)</p>', r'\1', t)
         pure_chaps.append(t)
 
     pure_md_path = os.path.join(out_dir, f"{safe_title}_纯Markdown笔记版.md")
@@ -246,6 +246,7 @@ def build_epub(book_id, root, title, author, texts):
     p { text-indent: 2em; margin: 0.55em 0; }
     p.preserve-line { text-indent: 0; margin: 0.5em 0; }
     p.caption { text-align: center; text-indent: 0; break-before: avoid; }
+    p.caption-standalone { text-align: center; text-indent: 0; font-size: 12pt; }
     p.caption-top { text-align: center; text-indent: 0; break-after: avoid; }
     p.right { text-align: right; text-indent: 0; }
     p.yw { font-family: "Kaiti SC", "KaiTi", "STKaiti", "楷体", serif; font-size: 1.05em; text-indent: 0; margin: 0.9em 0; padding: 0.5em 0.75em; border-left: 3px solid #9e2a2b; background-color: #f7f5ef; }
@@ -339,6 +340,9 @@ def md_to_html_simple(md_text, img_dir):
             else:
                 out.append(line)
             continue
+        if line.startswith('<p class="caption-standalone">') and line.endswith("</p>"):
+            out.append(line)
+            continue
         if line.startswith('<p class="preserve-line">') and line.endswith("</p>"):
             out.append(line)
             continue
@@ -421,10 +425,8 @@ async def build_pdf(book_id, root, title, author, intro, texts, cover_available=
 
     catalog_keys = {norm(label) for label in catalog if norm(label)}
     toc_items, chap_htmls = [], []
-    previous_heading_only = False
     for i, (titles, body_md) in enumerate(group_pdf_headings(texts, catalog), 1):
-        continue_page = previous_heading_only
-        previous_heading_only = not body_md.strip()
+        heading_only = not body_md.strip()
         ch_title = " ".join(titles)
         heading_html = "<br/>".join(escape(title) for title in titles)
         decoration_html = ""
@@ -447,9 +449,7 @@ async def build_pdf(book_id, root, title, author, intro, texts, cover_available=
             f'</a></li>'
         )
         chapter_class = "chapter copyright-page" if ch_title == "版权信息" else "chapter"
-        if continue_page:
-            chapter_class += " continue-page"
-        if previous_heading_only:
+        if heading_only:
             chapter_class += " heading-only"
         chap_htmls.append(
             f'<section class="{chapter_class}" id="chap-{i}">'
@@ -497,10 +497,18 @@ body {{
 .toc-list .toc-section a {{ padding-inline-start: 2em; }}
 .toc-num {{ font-size: 9.5pt; background: #f4ece1; color: #9e2a2b; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-right: 3.2mm; min-width: 7.5mm; text-align: center; }}
 .chapter {{ page-break-before: always; }}
-.chapter.continue-page {{ page-break-before: auto; break-before: auto; }}
-.chapter.heading-only {{ break-after: avoid-page; page-break-after: avoid; }}
+.chapter.heading-only {{
+    height: calc(297mm - 42mm + 50.4pt - 1px);
+    display: flex; flex-direction: column; justify-content: center;
+    box-sizing: border-box; break-inside: avoid;
+    break-after: page; page-break-after: always;
+}}
+.chapter.heading-only .chap-header {{
+    margin: 0; position: relative; top: -14mm;
+    break-after: auto; page-break-after: auto;
+}}
 .subsection-title {{ font-size: 15pt; font-weight: bold; margin: 1em 0 .4em; break-after: avoid; break-inside: avoid; }}
-.img-wrap figcaption, p.caption, p.caption-top {{ text-align: center; text-indent: 0; margin: 2mm 0 0; font-size: 12pt; }}
+.img-wrap figcaption, p.caption, p.caption-top, p.caption-standalone {{ text-align: center; text-indent: 0; margin: 2mm 0 0; font-size: 12pt; }}
 p.preserve-line {{ text-indent: 0; margin: 0.5em 0; }}
 p.right {{ text-align: right; text-indent: 0; }}
 .copyright-page p {{ text-align: center; text-indent: 0; margin: 1.3em 0; }}

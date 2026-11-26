@@ -785,8 +785,68 @@ def caption_line_continues(previous, following):
             and abs((a["left"] + a["right"] - b["left"] - b["right"]) / 2) <= size * 0.6)
 
 
+def prepare_unnumbered_caption_blocks(blocks):
+    """Use chapter-level layout evidence for unnumbered opening photo captions.
+
+    Missing images do not justify binding their captions to another photograph.
+    Stop the media run at ordinary prose rather than classifying all centered text.
+    """
+    result = [dict(block) for block in blocks]
+    if not any(block.get("type") == "img" for block in result):
+        return result
+    lines = [dict(block, **block.get("layout", {}), has_bounds=True)
+             for block in result if block.get("type") == "line"
+             and all(key in block.get("layout", {}) for key in
+                     ("left", "right", "viewport_y", "size"))]
+    bounds = caption_body_bounds(lines)
+    if bounds is None:
+        return result
+    left, right = bounds
+    media_run = True
+    for index, block in enumerate(result):
+        if block.get("type") == "img":
+            media_run = True
+            continue
+        if block.get("caption_for"):
+            continue
+        layout = block.get("layout", {})
+        text = block.get("text", "")
+        previous = result[index - 1] if index else {}
+        size = layout.get("size", 0)
+        centered = (all(key in layout for key in ("left", "right", "viewport_y", "size"))
+                    and abs((layout["left"] + layout["right"] - left - right) / 2) <= size * 0.6
+                    and layout["left"] > left + size
+                    and layout["right"] < right - size)
+        label = (block.get("cls") == "js" and 1 <= len(text) <= 80
+                 and not block.get("alignment") and not block.get("preserve_line")
+                 and not re.search(r"[。；;：:]", text)
+                 and not re.match(r"^(?:\d{4}年|注[:：]|版权|书名|作者)", text))
+        if not (media_run and centered and label):
+            media_run = False
+            continue
+        if previous.get("type") == "img":
+            gap = layout["viewport_y"] - previous.get("layout", {}).get("bottom", float("inf"))
+            if 0 <= gap <= size * 3:
+                block.update(caption_for=previous["src"], caption_position="after", alignment="center")
+            else:
+                media_run = False
+        else:
+            prev_layout = previous.get("layout", {})
+            following = result[index + 1] if index + 1 < len(result) else {}
+            photo_neighbor = (previous.get("caption_for") or previous.get("caption_standalone")
+                              or following.get("type") == "img")
+            separated = (not previous or previous.get("side") != block.get("side")
+                         or layout["viewport_y"] - prev_layout.get("viewport_y", float("inf")) >= size * 2.5)
+            if separated and photo_neighbor:
+                block.update(caption_standalone=True, alignment="center")
+            else:
+                media_run = False
+    return result
+
+
 def prepare_caption_blocks(blocks):
     """Recover caption boundaries before paragraph merging; leave raw blocks intact."""
+    blocks = prepare_unnumbered_caption_blocks(blocks)
     out = []
     index = 0
     while index < len(blocks):
@@ -889,6 +949,10 @@ def render_md(title, blocks, ch_idx):
             name = f"img_{digest}.{ext}"
             out.append("![图](images/%s)\n" % name)
             imgs.append({"src": b["src"], "name": name})
+            continue
+        if b.get("caption_standalone"):
+            flush()
+            out.extend(('<p class="caption-standalone">%s</p>' % escape(b["text"]), ""))
             continue
         if b.get("preserve_line"):
             flush()
